@@ -1,2 +1,2 @@
 # pytti
-Python text to image
+python text to image
