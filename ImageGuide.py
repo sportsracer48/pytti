@@ -1,5 +1,5 @@
 from torch import optim
-from tqdm.notebook import tqdm
+from pytti.Notebook import tqdm
 from pytti import *
 
 
@@ -54,4 +54,4 @@ class DirectImageGuide():
     loss.backward()
     self.optimizer.step()
     self.image_rep.update()
-    return ', '.join(f"{str(prompt)}:{float(loss):.3}" for prompt, loss in zip(prompts+["TV LOSS","TOTAL"],losses+[loss]))
+    return {str(prompt):float(loss) for prompt, loss in zip(prompts+["TV LOSS","TOTAL"],losses+[loss])}

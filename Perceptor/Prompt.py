@@ -4,7 +4,7 @@ from torch.nn import functional as F
 import re
 from torch.nn import functional as F
 from CLIP import clip
-from pytti.Perceptor import CLIP_PERCEPTORS
+import pytti
 
 def spherical_dist_loss(x, y):
   x = F.normalize(x, dim=-1)
@@ -22,7 +22,7 @@ class MultiClipPrompt(nn.Module):
           regardless of sign, lesser stop values make the optimizer greedier and greater stop values make the optimizer lazier
           sign must match weight, so stop is in [-1,0) if weight < 0, or stop is in [0,1) if weight > 0
   """
-  def __init__(self, prompt_string, perceptors=CLIP_PERCEPTORS, device=DEVICE):
+  def __init__(self, prompt_string, perceptors=None, device=DEVICE):
     super().__init__()
     tokens = re.split(':', prompt_string, 2)
     tokens = tokens + ['', '1', '-inf'][len(tokens):]
@@ -30,18 +30,21 @@ class MultiClipPrompt(nn.Module):
     text   = text.strip()
     weight = float(weight.strip())
     stop   = float(stop.strip())
+    if perceptors is None:
+      perceptors = pytti.Perceptor.CLIP_PERCEPTORS
     embeds = cat_with_pad([p.encode_text(clip.tokenize(text).to(device)).float() for p in perceptors])
     self.register_buffer('embeds',  embeds)
     self.register_buffer('weight', torch.as_tensor(weight))
     self.register_buffer('stop',   torch.as_tensor(stop))
     self.input_axes = ('n', 'c', 'i')
-    self.txt = prompt_string
+    self.prompt_string = prompt_string
+    self.text = text
 
   def __repr__(self):
-    return self.txt
+    return self.prompt_string
 
   def __str__(self):
-    return self.txt
+    return self.text
 
   def forward(self, input):
     """

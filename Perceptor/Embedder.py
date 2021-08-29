@@ -1,5 +1,5 @@
 from pytti import *
-from pytti.Perceptor import CLIP_PERCEPTORS
+import pytti
 
 import torch
 from torch import nn
@@ -13,8 +13,10 @@ class HDMultiClipEmbedder(nn.Module):
   and jbusted (https://twitter.com/jbusted1)
   and dribnet (https://github.com/dribnet)
   """
-  def __init__(self, perceptors=CLIP_PERCEPTORS, cutn = 40, noise_fac = 0.1):
+  def __init__(self, perceptors=None, cutn = 40, noise_fac = 0.1):
     super().__init__()
+    if perceptors is None:
+      perceptors = pytti.Perceptor.CLIP_PERCEPTORS
     self.cut_sizes = [p.visual.input_resolution for p in perceptors]
     self.cutn = cutn
     self.noise_fac = noise_fac

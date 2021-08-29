@@ -1,7 +1,7 @@
 import torch
 from CLIP import clip
+from pytti import DEVICE
 
-DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 CLIP_PERCEPTORS = None
 
 def init_clip(clip_models):
