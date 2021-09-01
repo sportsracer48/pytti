@@ -123,7 +123,6 @@ class PixelImage(DifferentiableImage):
       scale = self.scale
       im = ImageOps.grayscale(pil_image.resize((width//scale, height//scale)))
       im = TF.to_tensor(im)
-      print(im.shape)
       self.value.set_(im[0].to(DEVICE))
     guide.run_steps(201,[],[mse])
 
