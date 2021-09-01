@@ -1,6 +1,11 @@
-from torch import optim
+from torch import optim, nn
 from pytti.Notebook import tqdm
 from pytti import *
+import pandas as pd
+import math
+
+from labellines import labelLines
+from adjustText import adjust_text
 
 
 class DirectImageGuide():
@@ -12,25 +17,52 @@ class DirectImageGuide():
   optimizer: (Class)               optimizer class to use. Defaults to Adam
   all other arguments are passed as kwargs to the optimizer.
   """
-  def __init__(self, image_rep, embedder, tv_weight = 0.15, optimizer = optim.Adam, lr = None, weight_decay = 0.0, **optimizer_params):
+  def __init__(self, image_rep, embedder, optimizer = None, lr = None, **optimizer_params):
     self.image_rep = image_rep
     self.embedder = embedder
     if lr is None:
       lr = image_rep.lr
     optimizer_params['lr']=lr
-    optimizer_params['weight_decay']=weight_decay
-    self.optimizer = optimizer(image_rep.parameters(), **optimizer_params)
-    self.tv_weight = tv_weight
+    if optimizer is None:
+      self.optimizer = optim.Adam(image_rep.parameters(), **optimizer_params)
+    else:
+      self.optimizer = optimizer
+    self.dataframe = None
 
-  def run_steps(self, prompts, n_steps):
+  def run_steps(self, n_steps, prompts, loss_augs, stop = -math.inf):
     """
     runs the optimizer
     prompts: (ClipPrompt list) list of prompts
     n_steps: (positive integer) steps to run
     """
     for i in tqdm(range(n_steps)):
-      losses = self.train(prompts, i)
+      losses = self.train(i, prompts, loss_augs)
       self.update(i, losses)
+      if losses['TOTAL'] <= stop:
+        break
+
+  def plot_losses(self, ax1, ax2):
+    def plot_dataframe(df, ax):
+      keys = list(df)
+      keys.sort(reverse=True, key = lambda k:df[k].iloc[-1])
+      ax.clear()
+      df[keys].plot(ax=ax)
+      ax.legend(bbox_to_anchor=(1.04,1), loc="upper left")
+      ax.tick_params(labelbottom=True, labeltop=False, labelleft=True, labelright=True,
+                      bottom=True, top=False, left=True, right=False)
+      last_x = df.last_valid_index()
+      texts = labelLines(ax.get_lines(), align = False)
+      #print(texts)
+      adjust_text(texts, text_from_points=False, ax=ax)
+
+    df = self.dataframe
+    rel_loss = (df-df.iloc[0]).drop('TOTAL', axis=1)
+    plot_dataframe(rel_loss, ax1)
+    ax1.set_ylabel('Relative Loss')
+    ax1.set_xlabel('Step')
+    plot_dataframe(df, ax2)
+    ax2.set_ylabel('Absoulte Loss')
+    ax2.set_xlabel('Step')
 
   def update(self, i, losses):
     """
@@ -38,7 +70,7 @@ class DirectImageGuide():
     """
     pass
 
-  def train(self, prompts, i):
+  def train(self, i, prompts, loss_augs):
     """
     steps the optimizer
     promts: (ClipPrompt list) list of prompts
@@ -46,12 +78,21 @@ class DirectImageGuide():
     self.optimizer.zero_grad()
     z = self.image_rep.decode_training_tensor()
     losses = []
-    image_embeds = self.embedder(self.image_rep, input=z)
+    if self.embedder is not None:
+      image_embeds = self.embedder(self.image_rep, input=z)
     for prompt in prompts:
-        losses.append(prompt(format_input(image_embeds, self.embedder, prompt)))
-    losses.append(tv_loss(z)*self.tv_weight)
+      losses.append(prompt(format_input(image_embeds, self.embedder, prompt)))
+    for aug in loss_augs:
+      losses.append(aug(format_input(z, self.image_rep, aug)))
     loss = sum(losses)
     loss.backward()
     self.optimizer.step()
     self.image_rep.update()
-    return {str(prompt):float(loss) for prompt, loss in zip(prompts+["TV LOSS","TOTAL"],losses+[loss])}
+    loss_dict = {str(prompt):float(loss) for prompt, loss in zip(prompts+loss_augs+["TOTAL"],losses+[loss])}
+    if self.dataframe is None:
+      self.dataframe = pd.DataFrame(loss_dict, index=[i])
+      self.dataframe.index.name = 'Step'
+    else:
+      self.dataframe = self.dataframe.append(pd.DataFrame(loss_dict, index=[i]), ignore_index=False)
+      self.dataframe.index.name = 'Step'
+    return loss_dict

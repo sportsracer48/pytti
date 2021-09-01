@@ -2,9 +2,10 @@ from pytti import *
 from torch import nn
 from torch.nn import functional as F
 import re
-from torch.nn import functional as F
 from CLIP import clip
 import pytti
+from PIL import Image
+from pytti.Image import RGBImage
 
 def spherical_dist_loss(x, y):
   x = F.normalize(x, dim=-1)
@@ -37,6 +38,44 @@ class MultiClipPrompt(nn.Module):
     self.register_buffer('weight', torch.as_tensor(weight))
     self.register_buffer('stop',   torch.as_tensor(stop))
     self.input_axes = ('n', 'c', 'i')
+    self.prompt_string = prompt_string
+    self.text = text
+
+  def __repr__(self):
+    return self.prompt_string
+
+  def __str__(self):
+    return self.text
+
+  def forward(self, input):
+    """
+    input: (Tensor) input CLIP embedding
+    returns the input's loss compared to the saved embedding
+    """
+    dists = spherical_dist_loss(input, self.embeds)
+    dists = dists * self.weight.sign()
+    dists = self.weight.abs() * replace_grad(dists, torch.maximum(dists, self.stop))
+    return dists.mean()
+
+class MultiClipImagePrompt(nn.Module):
+  def __init__(self, embedder, prompt_string="IMAGE PROMPT", pil_image=None, device=DEVICE):
+    super().__init__()
+    tokens = re.split('(?<!^http)(?<!s):|:(?!//)', prompt_string, 2)
+    tokens = tokens + ['', '1', '-inf'][len(tokens):]
+    text, weight, stop = tokens
+    text   = text.strip()
+    if pil_image is None:
+      pil_image = Image.open(fetch(text)).convert("RGB")
+    width, height = pil_image.size
+    img = RGBImage(width, height)
+    img.encode_image(pil_image)
+    weight = float(weight.strip())
+    stop   = float(stop.strip())
+    embeds = embedder(img).detach()
+    self.input_axes = ('n', 'c', 'i')
+    self.register_buffer('embeds', format_input(embeds,embedder,self))
+    self.register_buffer('weight', torch.as_tensor(weight))
+    self.register_buffer('stop',   torch.as_tensor(stop))
     self.prompt_string = prompt_string
     self.text = text
 

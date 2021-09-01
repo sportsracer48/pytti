@@ -1,12 +1,14 @@
 from pytti import *
 from pytti.Image import DifferentiableImage
+from pytti.LossAug import MSE_Loss
+from pytti.ImageGuide import DirectImageGuide
 import math
 import numpy as np
 import torch
-from torch import nn
+from torch import nn, optim
 from torch.nn import functional as F
 from torchvision.transforms import functional as TF
-from PIL import Image
+from PIL import Image, ImageOps
 
 def break_tensor(tensor):
   floors = tensor.floor().long()
@@ -108,15 +110,22 @@ class PixelImage(DifferentiableImage):
     self.pallet.clamp_(0,self.pallet_inertia)
     self.value.clamp_(0,1)
     self.tensor.clamp_(0,float('inf'))
+    #self.tensor.set_(self.tensor.softmax(dim = 0))
 
-  @torch.no_grad()
-  def encode_image(self, pil_image, device=DEVICE):
-    raise NotImplementedError
-    # width, height = self.image_shape
-    # scale = self.scale
-    # pil_image = pil_image.resize((width//scale, height//scale), Image.NEAREST)
-    # pil_image = ImageOps.grayscale(pil_image)
-    #self.tensor.set_(TF.to_tensor(pil_image).unsqueeze(0).to(DEVICE))
+  def encode_image(self, pil_image, device=DEVICE, rescale = True):
+    width, height = self.image_shape
+    pil_image = pil_image.resize((width,height), Image.LANCZOS)
+    target = TF.to_tensor(pil_image).to(device)
+    mse = MSE_Loss(target)
+    #no embedder needed without any prompts
+    guide = DirectImageGuide(self, None, optimizer = optim.Adam([self.pallet, self.tensor], lr = .1))
+    with torch.no_grad():
+      scale = self.scale
+      im = ImageOps.grayscale(pil_image.resize((width//scale, height//scale)))
+      im = TF.to_tensor(im)
+      print(im.shape)
+      self.value.set_(im[0].to(DEVICE))
+    guide.run_steps(201,[],[mse])
 
   @torch.no_grad()
   def encode_random(self, random_pallet = False):

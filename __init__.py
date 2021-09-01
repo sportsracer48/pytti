@@ -1,6 +1,7 @@
 import torch
 from torchvision import transforms
 from torch.nn import functional as F
+import requests, io
 
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
@@ -86,3 +87,13 @@ def clamp_grad(input, min, max):
 
 normalize = transforms.Normalize(mean=[0.48145466, 0.4578275, 0.40821073],
                                  std=[0.26862954, 0.26130258, 0.27577711])
+
+def fetch(url_or_path):
+  if str(url_or_path).startswith('http://') or str(url_or_path).startswith('https://'):
+    r = requests.get(url_or_path)
+    r.raise_for_status()
+    fd = io.BytesIO()
+    fd.write(r.content)
+    fd.seek(0)
+    return fd
+  return open(url_or_path, 'rb')
