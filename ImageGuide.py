@@ -70,11 +70,11 @@ class DirectImageGuide():
       return dict(zip(labels, colors))
 
     df = self.dataframe
-    rel_loss = (df-df.iloc[0]).drop('TOTAL', axis=1)
-    plot_dataframe(rel_loss, ax1)
+    rel_loss = (df-df.iloc[0])
+    color_dict = plot_dataframe(rel_loss, ax1, remove_total = True)
     ax1.set_ylabel('Relative Loss')
     ax1.set_xlabel('Step')
-    plot_dataframe(df, ax2)
+    plot_dataframe(df, ax2, color_dict = color_dict)
     ax2.set_ylabel('Absoulte Loss')
     ax2.set_xlabel('Step')
 
