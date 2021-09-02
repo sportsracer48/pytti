@@ -62,7 +62,7 @@ class DirectImageGuide():
       if remove_total:
         [l.remove() for l in lines if l.get_label() == 'TOTAL']
       ax.relim()
-      #ax.autoscale(tight = True)
+      ax.autoscale_view()
         
       texts = labelLines(ax.get_lines(), align = False)
       #print(texts)
