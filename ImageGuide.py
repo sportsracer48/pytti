@@ -46,8 +46,8 @@ class DirectImageGuide():
       keys = list(df)
       keys.sort(reverse=True, key = lambda k:df[k].iloc[-1])
       ax.clear()
-      df[keys].plot(ax=ax)
-      ax.legend(bbox_to_anchor=(1.04,1), loc="upper left")
+      df[keys].plot(ax=ax, legend=False)
+      #ax.legend(bbox_to_anchor=(1.04,1), loc="upper left")
       ax.tick_params(labelbottom=True, labeltop=False, labelleft=True, labelright=True,
                       bottom=True, top=False, left=True, right=False)
       last_x = df.last_valid_index()
