@@ -42,7 +42,7 @@ class DirectImageGuide():
         break
 
   def plot_losses(self, ax1, ax2):
-    def plot_dataframe(df, ax):
+    def plot_dataframe(df, ax, color_dict = {}, remove_total = False):
       keys = list(df)
       keys.sort(reverse=True, key = lambda k:df[k].iloc[-1])
       ax.clear()
@@ -51,9 +51,23 @@ class DirectImageGuide():
       ax.tick_params(labelbottom=True, labeltop=False, labelleft=True, labelright=True,
                       bottom=True, top=False, left=True, right=False)
       last_x = df.last_valid_index()
+      lines = ax.get_lines()
+      for l in lines:
+        label = l.get_label()
+        if label in color_dict:
+          l.set_color(color_dict[label])
+
+      colors = [l.get_color() for l in lines]
+      labels = [l.get_label() for l in lines]
+      if remove_total:
+        [l.remove() for l in lines if l.get_label() == 'TOTAL']
+      ax.relim()
+      ax.autoscale(tight = True)
+        
       texts = labelLines(ax.get_lines(), align = False)
       #print(texts)
       adjust_text(texts, text_from_points=False, ax=ax)
+      return dict(zip(labels, colors))
 
     df = self.dataframe
     rel_loss = (df-df.iloc[0]).drop('TOTAL', axis=1)
