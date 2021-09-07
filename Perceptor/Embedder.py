@@ -50,9 +50,9 @@ class HDMultiClipEmbedder(nn.Module):
               (torch.zeros(1,).normal_(mean=.8, std=.3)
               .clip(cut_size/max_size, 1.) ** 1.5))
         offsetXMax = sideX - size + 1
-        paddingX = math.round(sideX * 0.25)
+        paddingX = round(sideX * 0.25)
         offsetYMax = sideY - size + 1
-        paddingY = math.round(sideY * 0.25)
+        paddingY = round(sideY * 0.25)
         offsetx = torch.clamp(torch.randint(0 - paddingX, offsetXMax + paddingX, ()), 0, offsetXMax)
         offsety = torch.clamp(torch.randint(0 - paddingY, offsetYMax + paddingY, ()), 0, offsetYMax)
         cutout = input[:, :, offsety:offsety + size, offsetx:offsetx + size]
