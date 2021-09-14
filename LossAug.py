@@ -23,6 +23,11 @@ class Loss(nn.Module):
   def get_loss(self, input):
     raise NotImplementedError
 
+  def set_weight(weight):
+    self.weight.set_(self.weight.new_tensor(weight))
+  def set_stop(stop):
+    self.stop.set_(self.stop.new_tensor(stop))
+
   def __str__(self):
     return self.name
 
@@ -55,5 +60,7 @@ class MSE_Loss(Loss):
       image_shape = pil_image.size
     im = pil_image.resize(image_shape, Image.LANCZOS)
     return cls(TF.to_tensor(im).unsqueeze(0).to(device), weight, stop, text+" (direct)")
+  def set_comp(pil_image, device=DEVICE):
+    self.comp.set_(TF.to_tensor(pil_image).to(device))
   def get_loss(self, input):
     return F.mse_loss(input, self.comp)

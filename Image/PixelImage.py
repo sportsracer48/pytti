@@ -17,14 +17,33 @@ def break_tensor(tensor):
   fracs  = tensor - floors
   return floors, ceils, rounds, fracs
 
+class PalletLoss(nn.Module):
+  def __init__(self, pallet_size, n_pallets, gamma = 2.5, weight = 0.15, device=DEVICE):
+    super().__init__()
+    self.register_buffer('comp',torch.linspace(0,1,pallet_size).pow(gamma).view(pallet_size,1).repeat(1, n_pallets).to(device))
+    self.register_buffer('weight',torch.as_tensor(weight).to(device))
+  def forward(self, input):
+    if isinstance(input, PixelImage):
+      pallet = input.sort_pallet()
+      magic_color = pallet.new_tensor([[[0.299,0.587,0.114]]])
+      color_norms = torch.linalg.vector_norm(pallet * (magic_color.sqrt()), dim = -1)
+      #print("color_norms",color_norms.shape)
+      #print("self.comp",self.comp.shape)
+      return F.mse_loss(color_norms, self.comp)*self.weight
+    else:
+      return 0
+  
+  def __str__(self):
+    return "Pallet normalization"
+
 class PixelImage(DifferentiableImage):
   """
   differentiable image format for pixel art images
   """
-  def __init__(self, width, height, scale, pallet_size, n_pallets = 2, device=DEVICE):
+  def __init__(self, width, height, scale, pallet_size, n_pallets, gamma = 1, hdr_weight = 0.5, device=DEVICE):
     super().__init__(width*scale, height*scale)
-    self.pallet_inertia = 1#math.pow(width*height*(n_pallets+1),1/3)/math.sqrt(n_pallets*pallet_size*3) 
-    pallet = torch.linspace(0,self.pallet_inertia,pallet_size).view(pallet_size,1,1).repeat(1,n_pallets,3)
+    self.pallet_inertia = 2
+    pallet = torch.linspace(0,self.pallet_inertia,pallet_size).pow(gamma).view(pallet_size,1,1).repeat(1,n_pallets,3)
     #pallet.set_(torch.rand_like(pallet)*self.pallet_inertia)
     self.pallet = nn.Parameter(pallet.to(device))
 
@@ -34,15 +53,28 @@ class PixelImage(DifferentiableImage):
     self.tensor = nn.Parameter(torch.zeros(n_pallets, height, width).to(device))
     self.output_axes = ('n', 's', 'y', 'x')
     self.scale = scale
+    self.pallet_loss = PalletLoss(pallet_size, n_pallets, gamma, hdr_weight) if hdr_weight != 0 else None
+
+  
+  def image_loss(self):
+    return [self.pallet_loss] if self.pallet_loss is not None else []
 
   def sort_pallet(self):
     pallet = (self.pallet/self.pallet_inertia).clamp(0,1)
-    #color values from https://www.nbdtech.com/Blog/archive/2008/04/27/Calculating-the-Perceived-Brightness-of-a-Color.aspx
-    magic_color = pallet.new_tensor([[[0.241,0.691,0.068]]])
+    #https://alienryderflex.com/hsp.html
+    magic_color = pallet.new_tensor([[[0.299,0.587,0.114]]])
     color_norms = (pallet.square()*magic_color).sum(dim = -1)
     pallet_indices = color_norms.argsort(dim = 0).T
     pallet = torch.stack([pallet[i][:,j] for j,i in enumerate(pallet_indices)],dim=1)
     return pallet
+
+  def get_image_tensor(self):
+    return torch.cat([self.value.unsqueeze(0),self.tensor])
+
+  @torch.no_grad()
+  def set_image_tensor(self, tensor):
+    self.value.set_(tensor[0])
+    self.tensor.set_(tensor[1:])
   
   def decode_tensor(self):
     width, height = self.image_shape
@@ -112,19 +144,31 @@ class PixelImage(DifferentiableImage):
     self.tensor.clamp_(0,float('inf'))
     #self.tensor.set_(self.tensor.softmax(dim = 0))
 
-  def encode_image(self, pil_image, device=DEVICE, rescale = True):
+  def encode_image(self, pil_image, device=DEVICE):
     width, height = self.image_shape
+
+    scale = self.scale
+    color_ref = pil_image.resize((width//scale, height//scale), Image.LANCZOS)
+    #value_ref = ImageOps.grayscale(color_ref)
+    with torch.no_grad():
+        #https://alienryderflex.com/hsp.html
+        magic_color = self.pallet.new_tensor([[[0.299]],[[0.587]],[[0.114]]])
+        value_ref = torch.linalg.vector_norm(TF.to_tensor(color_ref).to(device)*(magic_color.sqrt()), dim=0)
+        #keep the same dynamic range
+        min_val, max_val = self.value.min(), self.value.max()
+        new_min, new_max = value_ref.min(), value_ref.max()
+        new_value = (value_ref - new_min)/(new_max-new_min)*(max_val-min_val)+min_val
+        self.value.set_(new_value)
+        
+
+    #no embedder needed without any prompts
     pil_image = pil_image.resize((width,height), Image.LANCZOS)
     target = TF.to_tensor(pil_image).to(device)
     mse = MSE_Loss(target)
-    #no embedder needed without any prompts
     guide = DirectImageGuide(self, None, optimizer = optim.Adam([self.pallet, self.tensor], lr = .1))
-    with torch.no_grad():
-      scale = self.scale
-      im = ImageOps.grayscale(pil_image.resize((width//scale, height//scale)))
-      im = TF.to_tensor(im)
-      self.value.set_(im[0].to(DEVICE))
-    guide.run_steps(201,[],[mse])
+    guide.run_steps(201,[],[],[],[mse])
+
+
 
   @torch.no_grad()
   def encode_random(self, random_pallet = False):

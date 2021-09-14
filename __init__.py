@@ -50,7 +50,10 @@ def cat_with_pad(tensors):
   return torch.cat([pad_tensor(t, max_size) for t in tensors])
 
 def format_module(module, dest, *args, **kwargs):
-  return format_input(module(*args, **kwargs), module, dest)
+  output = module(*args, **kwargs)
+  if isinstance(output, tuple):
+    output = output[0]
+  return format_input(output, module, dest)
 
 class ReplaceGrad(torch.autograd.Function):
   """
@@ -97,3 +100,5 @@ def fetch(url_or_path):
     fd.seek(0)
     return fd
   return open(url_or_path, 'rb')
+
+__all__  = ['DEVICE', 'named_rearrange', 'format_input', 'pad_tensor', 'cat_with_pad', 'format_module', 'replace_grad', 'clamp_with_grad', 'clamp_grad', 'normalize', 'fetch']

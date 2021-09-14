@@ -29,17 +29,27 @@ class DirectImageGuide():
       self.optimizer = optimizer
     self.dataframe = None
 
-  def run_steps(self, n_steps, prompts, loss_augs, stop = -math.inf):
+  def run_steps(self, n_steps, 
+                      prompts, image_prompts, interp_prompts, loss_augs, 
+                      stop = -math.inf, interp_steps = 0, 
+                      i_offset = 0, skipped_steps = 0):
     """
     runs the optimizer
     prompts: (ClipPrompt list) list of prompts
     n_steps: (positive integer) steps to run
+    returns: the number of steps run
     """
     for i in tqdm(range(n_steps)):
-      losses = self.train(i, prompts, loss_augs)
-      self.update(i, losses)
+      losses = self.train(i+skipped_steps,
+                          prompts, image_prompts, interp_prompts, loss_augs, 
+                          interp_steps = interp_steps)
+      self.update(i+i_offset, losses, i+skipped_steps)
       if losses['TOTAL'] <= stop:
         break
+    return i+1
+
+  def clear_dataframe(self):
+    self.dataframe = None
 
   def plot_losses(self, ax1, ax2):
     def plot_dataframe(df, ax, color_dict = {}, remove_total = False):
@@ -70,6 +80,8 @@ class DirectImageGuide():
       return dict(zip(labels, colors))
 
     df = self.dataframe
+    if df is None or len(df.index) < 2:
+      return False
     rel_loss = (df-df.iloc[0])
     color_dict = plot_dataframe(rel_loss, ax1, remove_total = True)
     ax1.set_ylabel('Relative Loss')
@@ -77,14 +89,15 @@ class DirectImageGuide():
     plot_dataframe(df, ax2, color_dict = color_dict)
     ax2.set_ylabel('Absoulte Loss')
     ax2.set_xlabel('Step')
+    return True
 
-  def update(self, i, losses):
+  def update(self, i, losses, stage_i):
     """
     update hook called ever step
     """
     pass
 
-  def train(self, i, prompts, loss_augs):
+  def train(self, i, prompts, image_prompts, interp_prompts, loss_augs, interp_steps = 0):
     """
     steps the optimizer
     promts: (ClipPrompt list) list of prompts
@@ -93,16 +106,36 @@ class DirectImageGuide():
     z = self.image_rep.decode_training_tensor()
     losses = []
     if self.embedder is not None:
-      image_embeds = self.embedder(self.image_rep, input=z)
+      image_embeds, offsets, sizes = self.embedder(self.image_rep, input = z)
+
+    if i < interp_steps:
+      t = i/interp_steps
+      interp_losses = [prompt(format_input(image_embeds, self.embedder, prompt),
+                              format_input(offsets, self.embedder, prompt),
+                              format_input(sizes, self.embedder, prompt))*(1-t) for prompt in interp_prompts]
+    else:
+      t = 1
+      interp_losses = [0] 
+
     for prompt in prompts:
-      losses.append(prompt(format_input(image_embeds, self.embedder, prompt)))
+      losses.append(prompt(format_input(image_embeds, self.embedder, prompt),
+                           format_input(offsets, self.embedder, prompt),
+                           format_input(sizes, self.embedder, prompt))*t)
+    for prompt in image_prompts:
+      losses.append(prompt(format_input(image_embeds, self.embedder, prompt),
+                           format_input(offsets, self.embedder, prompt),
+                           format_input(sizes, self.embedder, prompt)))
     for aug in loss_augs:
       losses.append(aug(format_input(z, self.image_rep, aug)))
-    loss = sum(losses)
+    image_loss = self.image_rep.image_loss()
+    for img_loss in image_loss:
+      losses.append(img_loss(self.image_rep))
+
+    loss = sum(losses)+sum(interp_losses)
     loss.backward()
     self.optimizer.step()
     self.image_rep.update()
-    loss_dict = {str(prompt):float(loss) for prompt, loss in zip(prompts+loss_augs+["TOTAL"],losses+[loss])}
+    loss_dict = {str(prompt):float(loss) for prompt, loss in zip(prompts+image_prompts+loss_augs+image_loss+["TOTAL"],losses+[loss])}
     if self.dataframe is None:
       self.dataframe = pd.DataFrame(loss_dict, index=[i])
       self.dataframe.index.name = 'Step'

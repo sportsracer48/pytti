@@ -29,6 +29,20 @@ class DifferentiableImage(nn.Module):
     """
     return self.decode_tensor()
 
+  def get_image_tensor(self):
+    """
+    optional method: returns an [n x w_i x h_i] tensor representing the local image data
+    those data will be used for animation if afforded
+    """
+    raise NotImplementedError
+
+  def set_image_tensor(self, tensor):
+    """
+    optional method: accepts an [n x w_i x h_i] tensor representing the local image data
+    those data will be by the animation system
+    """
+    raise NotImplementedError
+
   def decode_tensor(self):
     """
     returns a decoded tensor of this image
@@ -54,13 +68,16 @@ class DifferentiableImage(nn.Module):
     """
     pass
 
+  def image_loss(self):
+    return []
+
   def decode_image(self):
     """
     render a PIL Image version of this image
     """
     tensor = self.decode_tensor()
     tensor = named_rearrange(tensor, self.output_axes, ('y', 'x', 's'))
-    array = np.array(tensor.mul(255).clamp(0, 255).cpu().detach().numpy().astype(np.uint8))[:,:,:]
+    array = tensor.mul(255).clamp(0, 255).cpu().detach().numpy().astype(np.uint8)[:,:,:]
     return Image.fromarray(array)
 
   def forward(self):
@@ -117,5 +134,4 @@ class EMAImage(DifferentiableImage):
 from pytti.Image.PixelImage import PixelImage
 from pytti.Image.RGBImage import RGBImage
 from pytti.Image.VQGANImage import VQGANImage
-from pytti.Image.AutomatonImage import AutomatonImage
 
