@@ -21,7 +21,7 @@ VQGAN_MODEL = None
 VQGAN_NAME  = None
 VQGAN_IS_GUMBEL = None
 
-VQGAN_MODEL_NAMES = ["imagenet", "coco", "wikiart", "sflicker", "openimages"]
+VQGAN_MODEL_NAMES = ["imagenet", "coco", "wikiart", "sflckr", "openimages"]
 VQGAN_CONFIG_URLS = {
   "imagenet":   ["curl -L -o imagenet.yaml -C - https://heibox.uni-heidelberg.de/f/274fb24ed38341bfa753/?dl=1"],
   "coco":       ["curl -L -o coco.yaml -C - https://dl.nmkd.de/ai/clip/coco/coco.yaml"],
