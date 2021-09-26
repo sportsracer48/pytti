@@ -154,11 +154,7 @@ class PixelImage(DifferentiableImage):
         #https://alienryderflex.com/hsp.html
         magic_color = self.pallet.new_tensor([[[0.299]],[[0.587]],[[0.114]]])
         value_ref = torch.linalg.vector_norm(TF.to_tensor(color_ref).to(device)*(magic_color.sqrt()), dim=0)
-        #keep the same dynamic range
-        min_val, max_val = self.value.min(), self.value.max()
-        new_min, new_max = value_ref.min(), value_ref.max()
-        new_value = (value_ref - new_min)/(new_max-new_min)*(max_val-min_val)+min_val
-        self.value.set_(new_value)
+        self.value.set_(value_ref)
         
 
     #no embedder needed without any prompts
