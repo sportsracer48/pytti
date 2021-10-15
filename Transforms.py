@@ -4,11 +4,12 @@ import torch.nn.functional as F
 from PIL import Image, ImageFilter
 import numpy as np
 from pytti import *
+from pytti.LossAug.DepthLoss import DepthLoss
 from infer import InferenceHelper
 
 PADDING_MODES = {'mirror':'reflection','smear':'border','black':'zeros','wrap':'zeros'}
 
-def apply_grid(tensor, grid, border_mode):
+def apply_grid(tensor, grid, border_mode, sampling_mode):
   height, width = tensor.shape[-2:]
   if border_mode == 'wrap':
     max_offset = torch.max(grid.clamp(min= 1))
@@ -18,12 +19,34 @@ def apply_grid(tensor, grid, border_mode):
       mod_offset = int(math.ceil(max_coord))
       #make it odd for sure
       mod_offset += 1-(mod_offset % 2)
-      grid.add_(mod_offset)
-      grid.remainder_(2.0001)
-      grid.sub_(1)
-  return F.grid_sample(tensor,grid,align_corners=True,padding_mode=PADDING_MODES[border_mode])
+      grid = grid.add(mod_offset).remainder(2.0001).sub(1)
+  return F.grid_sample(tensor,grid,mode=sampling_mode,align_corners=True,padding_mode=PADDING_MODES[border_mode])
 
-def zoom_2d(img, translate = (0,0), zoom = (0,0), rotate = 0, border_mode = 'mirror', device=DEVICE):
+def apply_flow(img, flow, border_mode = 'mirror', sampling_mode = 'bilinear', device = DEVICE):
+  try:
+    tensor = img.get_image_tensor().unsqueeze(0)
+    fallback = False
+  except NotImplementedError:
+    tensor = TF.to_tensor(img.decode_image()).unsqueeze(0).to(DEVICE)
+    fallback = True
+
+  height, width = flow.shape[-2:]
+  identity = torch.eye(3).to(device)
+  identity = identity[0:2,:].unsqueeze(0) #for batch
+  uv = F.affine_grid(identity, tensor.shape, align_corners=True)
+  flow = TF.resize(flow, tensor.shape[-2:]).movedim(1,3).div(torch.tensor([[[[width/2,height/2]]]],device=device))
+  grid = uv - flow
+  tensor = apply_grid(tensor, grid, border_mode, sampling_mode)
+  if not fallback:
+    img.set_image_tensor(tensor.squeeze(0))
+    tensor_out = img.decode_tensor().detach()
+  else:
+    array = tensor.squeeze().movedim(0,-1).mul(255).clamp(0, 255).cpu().detach().numpy().astype(np.uint8)[:,:,:]
+    img.encode_image(Image.fromarray(array))
+    tensor_out = tensor.detach()
+  return tensor_out
+
+def zoom_2d(img, translate = (0,0), zoom = (0,0), rotate = 0, border_mode = 'mirror', sampling_mode = 'bilinear', device=DEVICE):
   try:
     tensor = img.get_image_tensor().unsqueeze(0)
     fallback = False
@@ -37,14 +60,15 @@ def zoom_2d(img, translate = (0,0), zoom = (0,0), rotate = 0, border_mode = 'mir
   affine = torch.tensor([[zx*math.cos(theta),-zy*math.sin(theta),tx],
                           [zx*math.sin(theta), zy*math.cos(theta),ty]]).unsqueeze(0).to(device)
   grid   = F.affine_grid(affine, tensor.shape, align_corners=True)
-  tensor = apply_grid(tensor, grid, border_mode)
+  tensor = apply_grid(tensor, grid, border_mode, sampling_mode)
   if not fallback:
     img.set_image_tensor(tensor.squeeze(0))
   else:
     array = tensor.squeeze().movedim(0,-1).mul(255).clamp(0, 255).cpu().detach().numpy().astype(np.uint8)[:,:,:]
     img.encode_image(Image.fromarray(array))
+  return img.decode_image()
 
-def render_image_3d(image, depth, P, T, border_mode, device=DEVICE):
+def render_image_3d(image, depth, P, T, border_mode, sampling_mode, stabilize, device=DEVICE):
   """
   image: n x h x w pytorch Tensor: the image tensor
   depth: h x w pytorch Tensor: the depth tensor
@@ -86,71 +110,51 @@ def render_image_3d(image, depth, P, T, border_mode, device=DEVICE):
   
   #get the offset
   offset = (next_clip_pos - clip_pos)[:,0:2,...]
+  #flow_forward = offset.mul(torch.tensor([w/2,h/(2*f)],device = device).view(1,2,1,1))
   #offset[:,1,...] *= -1
   #offset = offset.to(device)
   #render the image
+  if stabilize:
+    advection = offset.mean(dim=-1, keepdim = True).mean(dim=-2, keepdim = True)
+    offset = offset - advection
   offset = offset.permute(0,2,3,1)
   grid = uv - offset
   #grid = grid.permute(0,2,3,1)
   #grid = grid.to(device)
 
-  return apply_grid(image,grid,border_mode).squeeze(0)
+  return apply_grid(image,grid,border_mode,sampling_mode).squeeze(0), offset.squeeze(0)
 
-infer_helper = None  
-def init_AdaBins():
-  global infer_helper
-  if infer_helper is None:
-    os.chdir('AdaBins')
-    try:
-      infer_helper = InferenceHelper(dataset='nyu')
-    finally:
-      os.chdir('..')
-
-def zoom_3d(img, translate = (0,0,0), rotate=0, fov = 45, near=180, far=15000, border_mode='mirror'):
-  print('moving:',translate)
+def zoom_3d(img, translate = (0,0,0), rotate=0, fov = 45, near=180, far=15000, border_mode='mirror', sampling_mode='bilinear', stabilize = False, device=DEVICE):
+  
   width, height = img.image_shape
   px = 2/height
   alpha = math.radians(fov)
   depth = 1/(math.tan(alpha/2))
-  #these make sure not to re-init
-  #init_opengl(width, height, depth, alpha)
-  init_AdaBins()
   
   pil_image = img.decode_image()
   
   #pil_image = pil_image.filter(ImageFilter.GaussianBlur(img.scale))
   f = width/height
-  
-  #if the area of an image is above this, the depth model fails
-  max_depth_area = 500000
-  image_area     = width*height
-  if image_area > max_depth_area:
-    depth_scale_factor = math.sqrt(max_depth_area/image_area)
-    depth_input = pil_image.resize((int(width*depth_scale_factor), int(height*depth_scale_factor)), Image.LANCZOS)
-    depth_resized = True
-  else:
-    depth_input = pil_image
-    depth_resized = False
-  #run the depth model (whatever that means)
-  gc.collect()
-  torch.cuda.empty_cache()
-  os.chdir('AdaBins')
-  try:
-    _, depth_map = infer_helper.predict_pil(depth_input)
-  finally:
-    os.chdir('..')
-  gc.collect()
-  torch.cuda.empty_cache()
 
   #convert depth map
-  depth_map = depth_map
+  depth_map, depth_resized = DepthLoss.get_depth(pil_image)
   depth_min = np.min(depth_map)
   depth_max = np.max(depth_map)
-  depth_image = Image.fromarray(np.array(np.interp(depth_map.squeeze(), (depth_min, depth_max), (0,255)), dtype=np.uint8))
+  #depth_image = Image.fromarray(np.array(np.interp(depth_map.squeeze(), (depth_min, depth_max), (0,255)), dtype=np.uint8))
   depth_map = np.interp(depth_map, (1e-3, 10), (near*px,far*px))
   depth_min = np.min(depth_map)
   depth_max = np.max(depth_map)
-  print("depth range:",depth_min/px,"to",depth_max/px)
+  
+  depth_median = np.median(depth_map.flatten())
+  depth_mean   = np.mean(depth_map)
+  r = depth_min/px
+  R = depth_max/px
+  mu = (depth_mean+depth_median)/(2*px)
+  print("depth range:",r,"(r) to",R,"(R)")
+  print("mu =",mu)
+  translate = [parametric_eval(x, r=r, R=R, mu=mu) for x in translate]
+  rotate = parametric_eval(rotate, r=r, R=R, mu=mu)
+  print('moving:',translate)
   
   try:
     image_tensor = img.get_image_tensor().to(DEVICE)
@@ -166,19 +170,20 @@ def zoom_3d(img, translate = (0,0,0), rotate=0, fov = 45, near=180, far=15000, b
     fallback = True
   p_matrix = torch.as_tensor(glm.perspective(alpha, f, 0.1, 4).to_list()).to(DEVICE)
   tx,ty,tz = translate
-  if rotate != 0:
-    r_matrix = glm.rotate(glm.mat4(1), math.radians(rotate), glm.vec3(0,0,-1))
-  else:
-    r_matrix = glm.mat4(1)
-  t_matrix = torch.as_tensor(glm.translate(r_matrix, glm.vec3(tx*px,-ty*px,tz*px)).to_list()).to(DEVICE)
-  new_image = render_image_3d(image_tensor, depth_tensor, p_matrix, t_matrix, border_mode = border_mode)
+  r_matrix = glm.mat4_cast(glm.quat(*rotate))
+  t_matrix = glm.translate(glm.mat4(1), glm.vec3(tx*px,-ty*px,tz*px))
+  
+  T_matrix = torch.as_tensor((r_matrix @ t_matrix).to_list()).to(DEVICE)
+  new_image, flow = render_image_3d(image_tensor, depth_tensor, p_matrix, T_matrix, border_mode = border_mode, sampling_mode = sampling_mode, stabilize = stabilize)
   if not fallback:
     img.set_image_tensor(new_image)
   else:
     #fallback path
     array = new_image.movedim(0,-1).mul(255).clamp(0, 255).cpu().detach().numpy().astype(np.uint8)[:,:,:]
     img.encode_image(Image.fromarray(array))
-  return depth_image, img.decode_image()
+  
+  flow_out = flow.div(2).mul(torch.tensor([[[[width,height]]]],device=device))
+  return flow_out, img.decode_image()
   
 
   

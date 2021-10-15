@@ -1,4 +1,4 @@
-import torch
+import torch, math
 from torchvision import transforms
 from torch.nn import functional as F
 import requests, io
@@ -91,6 +91,30 @@ def clamp_grad(input, min, max):
 normalize = transforms.Normalize(mean=[0.48145466, 0.4578275, 0.40821073],
                                  std=[0.26862954, 0.26130258, 0.27577711])
 
+math_env = None
+global_t = 0
+eval_memo = {}
+def parametric_eval(string, **vals):
+  global math_env
+  if string in eval_memo:
+    return eval_memo[string]
+  if isinstance(string, str):
+    if math_env is None:
+      math_env = {'abs':abs, 'max':max, 'min':min, 'pow':pow, 'round':round, '__builtins__': None}
+      math_env.update({key: getattr(math, key) for key in dir(math) if '_' not in key})
+    math_env.update(vals)
+    math_env['t'] = global_t
+    output = eval(string, math_env)
+    eval_memo[string] = output
+    return output
+  else:
+    return string
+
+def set_t(t):
+  global global_t, eval_memo
+  global_t = t
+  eval_memo = {}
+
 def fetch(url_or_path):
   if str(url_or_path).startswith('http://') or str(url_or_path).startswith('https://'):
     r = requests.get(url_or_path)
@@ -101,4 +125,4 @@ def fetch(url_or_path):
     return fd
   return open(url_or_path, 'rb')
 
-__all__  = ['DEVICE', 'named_rearrange', 'format_input', 'pad_tensor', 'cat_with_pad', 'format_module', 'replace_grad', 'clamp_with_grad', 'clamp_grad', 'normalize', 'fetch']
+__all__  = ['DEVICE', 'named_rearrange', 'format_input', 'pad_tensor', 'cat_with_pad', 'format_module', 'replace_grad', 'clamp_with_grad', 'clamp_grad', 'normalize', 'fetch', 'parametric_eval', 'set_t']

@@ -97,7 +97,7 @@ class DirectImageGuide():
     """
     pass
 
-  def train(self, i, prompts, image_prompts, interp_prompts, loss_augs, interp_steps = 0):
+  def train(self, i, prompts, image_prompts, interp_prompts, loss_augs, interp_steps = 0, save_loss = True):
     """
     steps the optimizer
     promts: (ClipPrompt list) list of prompts
@@ -126,7 +126,7 @@ class DirectImageGuide():
                            format_input(offsets, self.embedder, prompt),
                            format_input(sizes, self.embedder, prompt)))
     for aug in loss_augs:
-      losses.append(aug(format_input(z, self.image_rep, aug)))
+      losses.append(aug(format_input(z, self.image_rep, aug), self.image_rep))
     image_loss = self.image_rep.image_loss()
     for img_loss in image_loss:
       losses.append(img_loss(self.image_rep))
@@ -135,11 +135,14 @@ class DirectImageGuide():
     loss.backward()
     self.optimizer.step()
     self.image_rep.update()
-    loss_dict = {str(prompt):float(loss) for prompt, loss in zip(prompts+image_prompts+loss_augs+image_loss+["TOTAL"],losses+[loss])}
-    if self.dataframe is None:
-      self.dataframe = pd.DataFrame(loss_dict, index=[i])
-      self.dataframe.index.name = 'Step'
+    if save_loss:
+      loss_dict = {str(prompt):float(loss) for prompt, loss in zip(prompts+image_prompts+loss_augs+image_loss+["TOTAL"],losses+[loss])}
+      if self.dataframe is None:
+        self.dataframe = pd.DataFrame(loss_dict, index=[i])
+        self.dataframe.index.name = 'Step'
+      else:
+        self.dataframe = self.dataframe.append(pd.DataFrame(loss_dict, index=[i]), ignore_index=False)
+        self.dataframe.index.name = 'Step'
+      return loss_dict
     else:
-      self.dataframe = self.dataframe.append(pd.DataFrame(loss_dict, index=[i]), ignore_index=False)
-      self.dataframe.index.name = 'Step'
-    return loss_dict
+      return {'TOTAL':float(loss)}

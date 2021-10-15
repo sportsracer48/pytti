@@ -36,6 +36,12 @@ class DifferentiableImage(nn.Module):
     """
     raise NotImplementedError
 
+  def get_latent_tensor(self, detach = False):
+    if detach:
+      return self.get_image_tensor().detach()
+    else:
+      return self.get_image_tensor()
+
   def set_image_tensor(self, tensor):
     """
     optional method: accepts an [n x w_i x h_i] tensor representing the local image data

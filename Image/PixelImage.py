@@ -1,6 +1,6 @@
 from pytti import *
 from pytti.Image import DifferentiableImage
-from pytti.LossAug import MSE_Loss
+from pytti.LossAug import MSELoss
 from pytti.ImageGuide import DirectImageGuide
 import math
 import numpy as np
@@ -32,9 +32,58 @@ class PalletLoss(nn.Module):
       return F.mse_loss(color_norms, self.comp)*self.weight
     else:
       return 0
-  
+  @torch.no_grad()
+  def set_weight(self, weight, device = DEVICE):
+    self.weight.set_(torch.as_tensor(weight, device=device))
   def __str__(self):
     return "Pallet normalization"
+
+
+
+def get_closest_color(a,b):
+  """
+  a: h1 x w1 x 3 pytorch tensor
+  b: h2 x w2 x 3 pytorch tensor
+  returns: h1 x w1 x 3 pytorch tensor containing the nearest color in b to the corresponding pixels in a"""
+  a_flat = a.contiguous().view(1,-1,3)
+  b_flat = b.contiguous().view(-1,1,3)
+  a_b = torch.norm(a_flat - b_flat,dim=2,keepdim=True)
+  weights = F.softmin(a_b,dim=0)
+  closest_color = (b_flat*weights).sum(dim=0)
+  return closest_color.view(a.shape)
+  
+def color_loss(a,b):
+  return F.mse_loss(a,get_closest_color(a,b))
+
+class PalletTarget(nn.Module):
+  def __init__(self, img, pil_image, weight = 0.01, device = DEVICE):
+    super().__init__()
+    width, height = img.image_shape
+    dummy = PixelImage(width//img.scale, height//img.scale, img.scale, img.pallet_size, img.n_pallets, hdr_weight = 0)
+    dummy.encode_image(pil_image)
+    self.n_pallets = img.n_pallets
+    self.pallet_size = img.pallet_size
+    self.register_buffer('weight',torch.as_tensor(weight).to(device))
+    self.register_buffer('comp', dummy.sort_pallet().detach())
+  def forward(self, input):
+    if isinstance(input, PixelImage):
+      pallet1 = input.sort_pallet()
+      pallet2 = self.comp
+      return color_loss(pallet1, pallet2)#+F.mse_loss(pallet1,pallet2)
+    else:
+      return 0
+  @torch.no_grad()
+  def set_weight(self, weight, device = DEVICE):
+    self.weight.set_(torch.as_tensor(weight, device=device))
+  def __str__(self):
+    return "Pallet target"
+  @torch.no_grad()
+  def render_pallet(self):
+    pallet = self.comp
+    width, height = self.n_pallets*16, self.pallet_size*32
+    array = np.array(pallet.mul(255).clamp(0, 255).cpu().detach().numpy().astype(np.uint8))[:,:,:]
+    return Image.fromarray(array).resize((width,height), Image.NEAREST)
+  
 
 class PixelImage(DifferentiableImage):
   """
@@ -54,10 +103,13 @@ class PixelImage(DifferentiableImage):
     self.output_axes = ('n', 's', 'y', 'x')
     self.scale = scale
     self.pallet_loss = PalletLoss(pallet_size, n_pallets, gamma, hdr_weight) if hdr_weight != 0 else None
+    self.pallet_target = None
 
-  
+  def set_pallet_target(self, pil_image, weight):
+    self.pallet_target = PalletTarget(self, pil_image, weight)
+
   def image_loss(self):
-    return [self.pallet_loss] if self.pallet_loss is not None else []
+    return [x for x in [self.pallet_loss, self.pallet_target] if x is not None]
 
   def sort_pallet(self):
     pallet = (self.pallet/self.pallet_inertia).clamp(0,1)
@@ -93,11 +145,11 @@ class PixelImage(DifferentiableImage):
 
     colors_disc = pallet[value_rounds]
     colors_disc = (colors_disc * pallets).sum(dim = 2)
-    colors_disc = F.interpolate(colors_disc.movedim(2,0).unsqueeze(0), (height, width) , mode='nearest')
+    colors_disc = F.interpolate(colors_disc.movedim(2,0).unsqueeze(0).to(DEVICE, memory_format = torch.channels_last), (height, width) , mode='nearest')
 
-    colors_cont = pallet[value_floors]*(1-value_fracs) + pallet[value_ceils]*value_fracs
+    colors_cont = (pallet[value_floors]*(1-value_fracs) + pallet[value_ceils]*value_fracs)
     colors_cont = (colors_cont * pallet_weights).sum(dim = 2)
-    colors_cont = F.interpolate(colors_cont.movedim(2,0).unsqueeze(0), (height, width) , mode='nearest')
+    colors_cont = F.interpolate(colors_cont.movedim(2,0).unsqueeze(0).to(DEVICE, memory_format = torch.channels_last), (height, width) , mode='nearest')
     return replace_grad(colors_disc, colors_cont*0.5+colors_disc*0.5)
 
   @torch.no_grad()
@@ -149,24 +201,26 @@ class PixelImage(DifferentiableImage):
 
     scale = self.scale
     color_ref = pil_image.resize((width//scale, height//scale), Image.LANCZOS)
+    color_ref = TF.to_tensor(color_ref).to(device)
     #value_ref = ImageOps.grayscale(color_ref)
     with torch.no_grad():
-        #https://alienryderflex.com/hsp.html
-        magic_color = self.pallet.new_tensor([[[0.299]],[[0.587]],[[0.114]]])
-        value_ref = torch.linalg.vector_norm(TF.to_tensor(color_ref).to(device)*(magic_color.sqrt()), dim=0)
-        #keep the same dynamic range
-        min_val, max_val = self.value.min(), self.value.max()
-        new_min, new_max = value_ref.min(), value_ref.max()
-        new_value = (value_ref - new_min)/(new_max-new_min)*(max_val-min_val)+min_val
-        self.value.set_(new_value)
-        
+      #https://alienryderflex.com/hsp.html
+      magic_color = self.pallet.new_tensor([[[0.299]],[[0.587]],[[0.114]]])
+      value_ref = torch.linalg.vector_norm(color_ref*(magic_color.sqrt()), dim=0)
+      self.value.set_(value_ref)
 
     #no embedder needed without any prompts
     pil_image = pil_image.resize((width,height), Image.LANCZOS)
     target = TF.to_tensor(pil_image).to(device)
-    mse = MSE_Loss(target)
+    mse = MSELoss(target)
+
+    if self.pallet_loss is not None:
+      before_weight = self.pallet_loss.weight.detach()
+      self.pallet_loss.set_weight(0.01)
     guide = DirectImageGuide(self, None, optimizer = optim.Adam([self.pallet, self.tensor], lr = .1))
     guide.run_steps(201,[],[],[],[mse])
+    if self.pallet_loss is not None:
+      self.pallet_loss.set_weight(before_weight)
 
 
 

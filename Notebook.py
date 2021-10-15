@@ -144,12 +144,9 @@ def load_clip(params):
     Perceptor.init_clip(CLIP_MODEL_NAMES)
     print("CLIP loaded.")
 
-math_env = None
-def parametric_eval(string, t):
-  global math_env
-  if math_env is None:
-    import math
-    math_env = {'abs':abs, 'max':max, 'min':min, 'pow':pow, 'round':round, '__builtins__': None}
-    math_env.update({key: getattr(math, key) for key in dir(math) if '_' not in key})
-  math_env['t'] = t
-  return eval(string, math_env)
+def get_frames(path):
+  """reads the frames of the mp4 file `path` and returns them as a list of PIL images"""
+  import imageio
+  from PIL import Image
+  vid = imageio.get_reader(path,  'ffmpeg')
+  return vid

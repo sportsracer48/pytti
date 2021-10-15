@@ -26,7 +26,8 @@ class HDMultiClipEmbedder(nn.Module):
     self.augs = nn.Sequential(K.RandomHorizontalFlip(p=0.5),
                               K.RandomAffine(degrees=30, translate=0.1, p=0.8, padding_mode='border'),
                               K.RandomPerspective(0.2, p=0.4,),
-                              K.ColorJitter(hue=0.01, saturation=0.01,  p=0.7),)
+                              K.ColorJitter(hue=0.01, saturation=0.01,  p=0.7),
+                              K.RandomErasing(scale=(.1, .4), ratio=(.3, 1/.3), same_on_batch=True, p=0.7),)
     self.input_axes  = ('n', 's', 'y', 'x')
     self.output_axes = ('c', 'n', 'i')
     self.perceptors = perceptors
@@ -42,9 +43,9 @@ class HDMultiClipEmbedder(nn.Module):
     perceptors=self.perceptors
     side_x, side_y = diff_image.image_shape
     if input is None:
-      input = format_module(diff_image, self)
+      input = format_module(diff_image, self).to(device = device, memory_format = torch.channels_last)
     else:
-      input = format_input(input, diff_image, self)
+      input = format_input(input, diff_image, self).to(device = device, memory_format = torch.channels_last)
     max_size = min(side_x, side_y)
     image_embeds = []
     all_offsets = []

@@ -14,7 +14,7 @@ def spherical_dist_loss(x, y):
   return (x - y).norm(dim=-1).div(2).arcsin().pow(2).mul(2)
 
 def make_mask(mask_fun, thresh):
-  return lambda pos, size: mask_fun(size,pos,thresh)
+  return lambda pos, size: mask_fun(size,pos,parametric_eval(thresh))
 
 def mask_right(pos, size, thresh = 0.5):
   cent = pos[...,0]+size[...,0]/2
@@ -47,12 +47,15 @@ class Prompt(nn.Module):
     super().__init__()
     if embeds is not None:
       self.register_buffer('embeds',  embeds)
-    self.register_buffer('weight', torch.as_tensor(weight))
-    self.register_buffer('stop',   torch.as_tensor(stop))
+    #self.register_buffer('weight', torch.as_tensor(weight))
+    #self.register_buffer('stop',   torch.as_tensor(stop))
+    self.weight = weight
+    self.stop = stop
     self.input_axes = ('n', 'c', 'i')
     self.prompt_string = prompt_string
     self.text = text
     self.mask = mask
+    self.enabled = True
 
   def __repr__(self):
     return self.prompt_string
@@ -60,15 +63,23 @@ class Prompt(nn.Module):
   def __str__(self):
     return self.text
 
-  def forward(self, embed, position, size):
+  def set_enabled(self, enabled):
+    self.enabled = enabled
+
+  def forward(self, embed, position, size, device = DEVICE):
     """
     input: (Tensor) input CLIP embedding
     returns the input's loss compared to the saved embedding
     """
+    if not self.enabled:
+      return 0
     dists = spherical_dist_loss(embed, self.embeds)
-    dists = dists * self.weight.sign()
-    stops =  torch.maximum(self.mask(position, size)+self.weight.sign().clamp(max=0), self.stop)
-    dists = self.weight.abs() * replace_grad(dists, torch.maximum(dists, stops))
+    weight = torch.as_tensor(parametric_eval(self.weight), device=device)
+    stop   = torch.as_tensor(parametric_eval(self.stop),   device=device)
+
+    dists = dists * weight.sign()
+    stops = torch.maximum(self.mask(position, size)+weight.sign().clamp(max=0), stop)
+    dists = weight.abs() * replace_grad(dists, torch.maximum(dists, stops))
     return dists.mean()
 
 class MultiClipPrompt(Prompt):
@@ -86,10 +97,7 @@ class MultiClipPrompt(Prompt):
     text, weight, stop = parse(prompt_string,':',['', '1', '-inf'])
     text   = text.strip()
     weight, direction, cutoff = parse(weight,'_',['1','a','0.5']) 
-    weight = float(weight.strip())
-    stop   = float(stop.strip())
     direction = direction.strip()
-    cutoff = float(cutoff.strip())
     mask = make_mask(MASK_DICT[direction],cutoff)
     if perceptors is None:
       perceptors = pytti.Perceptor.CLIP_PERCEPTORS
@@ -107,11 +115,15 @@ def minimize_average_distance(tensor_a, tensor_b, device=DEVICE):
   """
   tensor_a = tensor_a.detach().cpu().numpy()
   tensor_b = tensor_b.detach().cpu().numpy()
-  tensor_a = tensor_a.reshape(tensor_a.shape[0], -1)
-  tensor_b = tensor_b.reshape(tensor_b.shape[0], -1)
-  distances = cdist(tensor_a, tensor_b)
-  row_ind, col_ind = linear_sum_assignment(distances)
-  return torch.tensor(col_ind).long().to(device)
+  out = []
+  for c in range(tensor_a.shape[0]):
+    a = tensor_a[c,:,:]
+    b = tensor_b[c,:,:]
+    distances = cdist(a, b)
+    row_ind, col_ind = linear_sum_assignment(distances)
+    col_ind = torch.as_tensor(col_ind)
+    out.append(col_ind)
+  return out
 
 class MultiClipImagePrompt(Prompt):
   def __init__(self, embedder, prompt_string="IMAGE PROMPT", pil_image=None):
@@ -123,18 +135,27 @@ class MultiClipImagePrompt(Prompt):
     img = RGBImage(width, height)
     img.encode_image(pil_image)
     weight, direction, cutoff = parse(weight,'_',['1','a','0.5']) 
-    weight = float(weight.strip())
-    stop   = float(stop.strip())
     direction = direction.strip()
-    cutoff = float(cutoff.strip())
     mask = make_mask(MASK_DICT[direction],cutoff)
     embeds, positions, sizes = embedder(img)
-    embeds = embeds.detach()
-    self.input_axes = ('n', 'c', 'i')
+    embeds = embeds.new_tensor(embeds.clone())
+    self.input_axes = ('c', 'n', 'i')
     embeds = format_input(embeds,embedder,self)
     super().__init__(embeds, weight, stop, text+" (semantic)", prompt_string, mask = mask)
+    self.input_axes = ('c', 'n', 'i')
     self.register_buffer('positions',format_input(positions,embedder,self))
     self.register_buffer('sizes'    ,format_input(sizes,embedder,self))
+  
+  @torch.no_grad()
+  def set_image(self, embedder, pil_image):
+    width, height = pil_image.size
+    img = RGBImage(width, height)
+    img.encode_image(pil_image)
+    embeds, positions, sizes = embedder(img)
+    embeds = embeds.new_tensor(embeds.clone())
+    self.positions.set_(format_input(positions,embedder,self))
+    self.sizes.set_(format_input(sizes,embedder,self))
+    self.embeds.set_(format_input(embeds,embedder,self))
 
 class LocationAwareMCIP(MultiClipImagePrompt):
   def forward(self, embed, position, size):
@@ -142,8 +163,11 @@ class LocationAwareMCIP(MultiClipImagePrompt):
     input: (Tensor) input CLIP embedding
     returns the input's loss compared to the saved embedding
     """
-    cent_a = position + size/2
-    cent_b = self.positions + self.sizes/2
+    cent_a = self.positions + self.sizes/2
+    cent_b = position + size/2
     indices = minimize_average_distance(cent_a, cent_b)
-    return super().forward(embed[indices], position, size)
+    embed = torch.stack([a[i] for a,i in zip(embed, indices)])
+    position = torch.stack([a[i] for a,i in zip(position, indices)])
+    size = torch.stack([a[i] for a,i in zip(size, indices)])
+    return super().forward(embed, position, size)
 
