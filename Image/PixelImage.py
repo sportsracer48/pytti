@@ -36,7 +36,7 @@ class PalletLoss(nn.Module):
   def set_weight(self, weight, device = DEVICE):
     self.weight.set_(torch.as_tensor(weight, device=device))
   def __str__(self):
-    return "Pallet normalization"
+    return "palette normalization"
 
 
 
