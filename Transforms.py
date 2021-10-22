@@ -91,7 +91,7 @@ def render_image_3d(image, depth, P, T, border_mode, sampling_mode, stabilize, d
   #uv = torch.cat([u,v],dim=1).to(device)
   identity = torch.eye(3).to(device)
   identity = identity[0:2,:].unsqueeze(0) #for batch
-  uv = F.affine_grid(identity, image.shape)
+  uv = F.affine_grid(identity, image.shape, align_corners=True)
   #get the depth at each point
   depth = depth.unsqueeze(0).unsqueeze(0)
   #depth = depth.to(device)
