@@ -169,29 +169,29 @@ class OpticalFlowLoss(MSELoss):
     image1 = TF.to_tensor(frame_prev).unsqueeze(0).to(device)
     image2 = TF.to_tensor(frame_next).unsqueeze(0).to(device)
 
-    # if self.bg_mask.shape[-2:] != image1.shape[-2:]:
-    #   bg_mask = TF.resize(self.bg_mask, image1.shape[-2:])
-    #   self.bg_mask.set_(bg_mask)
-    # noise = torch.empty_like(image2)
-    # noise.normal_(mean = 0, std = 0.05)
-    # noise.mul_(self.bg_mask)
-    # #adding the same noise vectors to both images forces
-    # #the flow model to match those parts of the frame, effectively
-    # #disabling the flow in those areas.
-    # image1.add_(noise)
-    # image2.add_(noise)
-
-    bdy = image2.clone().squeeze(0).mean(dim = 0)
-    h, w = bdy.shape
-    s = 4
-    bdy[s:-s,s:-s] = 0
-    mean = bdy.sum().div(w*h - (w-2*s)*(h-s*2))
-    overlay = image2.gt(0.5) if mean > 0.5 else image2.lt(0.5)
+    if self.bg_mask.shape[-2:] != image1.shape[-2:]:
+      bg_mask = TF.resize(self.bg_mask, image1.shape[-2:])
+      self.bg_mask.set_(bg_mask)
     noise = torch.empty_like(image2)
     noise.normal_(mean = 0, std = 0.05)
-    noise[torch.logical_not(overlay)] = 0
+    noise.mul_(self.bg_mask)
+    #adding the same noise vectors to both images forces
+    #the flow model to match those parts of the frame, effectively
+    #disabling the flow in those areas.
     image1.add_(noise)
     image2.add_(noise)
+
+    # bdy = image2.clone().squeeze(0).mean(dim = 0)
+    # h, w = bdy.shape
+    # s = 4
+    # bdy[s:-s,s:-s] = 0
+    # mean = bdy.sum().div(w*h - (w-2*s)*(h-s*2))
+    # overlay = image2.gt(0.5) if mean > 0.5 else image2.lt(0.5)
+    # noise = torch.empty_like(image2)
+    # noise.normal_(mean = 0, std = 0.05)
+    # noise[torch.logical_not(overlay)] = 0
+    # image1.add_(noise)
+    # image2.add_(noise)
 
     flow_forward = OpticalFlowLoss.get_flow(image1, image2)
     flow_backward = OpticalFlowLoss.get_flow(image2, image1)
