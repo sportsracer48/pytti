@@ -245,13 +245,13 @@ class PixelImage(DifferentiableImage):
     if smart_encode:
       mse = HSVLoss.TargetImage('HSV loss', self.image_shape, pil_image)
 
-      # if self.hdr_loss is not None:
-      #   before_weight = self.hdr_loss.weight.detach()
-      #   self.hdr_loss.set_weight(0.01)
+      if self.hdr_loss is not None:
+        before_weight = self.hdr_loss.weight.detach()
+        self.hdr_loss.set_weight(0.01)
       guide = DirectImageGuide(self, None, optimizer = optim.Adam([self.pallet, self.tensor], lr = .1))
       guide.run_steps(201,[],[],[mse])
-      # if self.hdr_loss is not None:
-      #   self.hdr_loss.set_weight(before_weight)
+      if self.hdr_loss is not None:
+        self.hdr_loss.set_weight(before_weight)
 
   @torch.no_grad()
   def encode_random(self, random_pallet = False):
