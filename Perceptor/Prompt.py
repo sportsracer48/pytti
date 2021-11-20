@@ -125,7 +125,7 @@ def mask_semantic(text, device = DEVICE):
     if thresh == 0.5000873264:
       return spherical_dist_loss(emb, embeds), 1
     else:
-      thresh = (thresh - 0.7)/0.3
+      thresh = thresh*0.3 + 0.7
       return spherical_dist_loss(emb, embeds).gt(thresh), 1
   return mask
 
