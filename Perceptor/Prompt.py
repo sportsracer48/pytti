@@ -146,7 +146,7 @@ def parse_prompt(embedder, prompt_string = "", pil_image=None, device = DEVICE):
   else:
     perceptors = pytti.Perceptor.CLIP_PERCEPTORS
     embeds = cat_with_pad([p.encode_text(clip.tokenize(text).to(device)).float() for p in perceptors])
-    out = Prompt(embeds, weight, stop, text, prompt_string, mask = mask)
+    out = Prompt(embeds, embedder, weight, stop, text, prompt_string, mask = mask)
   if roto is not None:
     roto.target = out
     roto.update(0)
