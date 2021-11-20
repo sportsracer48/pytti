@@ -5,8 +5,20 @@ import pandas as pd
 import math
 
 from labellines import labelLines
-from adjustText import adjust_text
 
+def unpack_dict(D, n = 2):
+  ds = [{k:V[i] for k,V in D.items()} for i in range(n)]
+  return tuple(ds)
+
+import pandas as pd
+from scipy.signal import savgol_filter
+
+def smooth_dataframe(df, window_size):
+  """applies a moving average filter to the columns of df"""
+  smoothed_df = pd.DataFrame().reindex_like(df)
+  for key in df.columns:
+    smoothed_df[key] = savgol_filter(df[key], window_size, 2, mode='nearest')
+  return smoothed_df
 
 class DirectImageGuide():
   """
@@ -23,14 +35,15 @@ class DirectImageGuide():
     if lr is None:
       lr = image_rep.lr
     optimizer_params['lr']=lr
+    self.optimizer_params = optimizer_params
     if optimizer is None:
       self.optimizer = optim.Adam(image_rep.parameters(), **optimizer_params)
     else:
       self.optimizer = optimizer
-    self.dataframe = None
+    self.dataframe = []
 
   def run_steps(self, n_steps, 
-                      prompts, image_prompts, interp_prompts, loss_augs, 
+                      prompts, interp_prompts, loss_augs, 
                       stop = -math.inf, interp_steps = 0, 
                       i_offset = 0, skipped_steps = 0):
     """
@@ -40,64 +53,67 @@ class DirectImageGuide():
     returns: the number of steps run
     """
     for i in tqdm(range(n_steps)):
+      self.update(i+i_offset, i+skipped_steps)
       losses = self.train(i+skipped_steps,
-                          prompts, image_prompts, interp_prompts, loss_augs, 
+                          prompts, interp_prompts, loss_augs, 
                           interp_steps = interp_steps)
-      self.update(i+i_offset, losses, i+skipped_steps)
       if losses['TOTAL'] <= stop:
         break
     return i+1
+  
+  def set_optim(self, opt = None):
+    if opt is not None:
+      self.optimizer = opt
+    else:
+      self.optimizer = optim.Adam(self.image_rep.parameters(), **self.optimizer_params)
 
   def clear_dataframe(self):
-    self.dataframe = None
+    self.dataframe = []
 
-  def plot_losses(self, ax1, ax2):
-    def plot_dataframe(df, ax, color_dict = {}, remove_total = False):
+  def plot_losses(self, axs):
+    def plot_dataframe(df, ax, legend = False):
       keys = list(df)
       keys.sort(reverse=True, key = lambda k:df[k].iloc[-1])
       ax.clear()
-      df[keys].plot(ax=ax, legend=False)
-      #ax.legend(bbox_to_anchor=(1.04,1), loc="upper left")
-      ax.tick_params(labelbottom=True, labeltop=False, labelleft=True, labelright=True,
-                      bottom=True, top=False, left=True, right=False)
+      df[keys].plot(ax=ax, legend = legend)
+      if(legend):
+        ax.legend(bbox_to_anchor=(1.04,1), loc="upper left")
+      ax.tick_params(labelbottom=True, labeltop=False, labelleft=True, labelright=False,
+                     bottom=True, top=False, left=True, right=False)
       last_x = df.last_valid_index()
       lines = ax.get_lines()
-      for l in lines:
-        label = l.get_label()
-        if label in color_dict:
-          l.set_color(color_dict[label])
 
       colors = [l.get_color() for l in lines]
       labels = [l.get_label() for l in lines]
-      if remove_total:
-        [l.remove() for l in lines if l.get_label() == 'TOTAL']
       ax.relim()
       ax.autoscale_view()
         
-      texts = labelLines(ax.get_lines(), align = False)
-      #print(texts)
-      adjust_text(texts, text_from_points=False, ax=ax)
+      labelLines(ax.get_lines(), align = False)
       return dict(zip(labels, colors))
 
-    df = self.dataframe
-    if df is None or len(df.index) < 2:
-      return False
-    rel_loss = (df-df.iloc[0])
-    color_dict = plot_dataframe(rel_loss, ax1, remove_total = True)
-    ax1.set_ylabel('Relative Loss')
-    ax1.set_xlabel('Step')
-    plot_dataframe(df, ax2, color_dict = color_dict)
-    ax2.set_ylabel('Absoulte Loss')
-    ax2.set_xlabel('Step')
+    dfs = self.dataframe[:]
+    if dfs != []:
+      dfs[0] = smooth_dataframe(dfs[0], 17)
+    for i,(df,ax) in enumerate(zip(dfs,axs)):
+      if len(df.index) < 2:
+        return False
+      #m = df.apply(lambda col: col.first_valid_index())
+      #print(m)
+      #print(df.lookup(m, m.index))
+      #rel_loss = (df-df.lookup(m, m.index))
+      if not df.empty:
+        plot_dataframe(df, ax, legend = i == 0)
+      ax.set_ylabel('Loss')
+      ax.set_xlabel('Step')
     return True
 
-  def update(self, i, losses, stage_i):
+  def update(self, i, stage_i):
     """
     update hook called ever step
     """
     pass
 
-  def train(self, i, prompts, image_prompts, interp_prompts, loss_augs, interp_steps = 0, save_loss = True):
+  def train(self, i, prompts, interp_prompts, loss_augs, interp_steps = 0, save_loss = True):
     """
     steps the optimizer
     promts: (ClipPrompt list) list of prompts
@@ -112,37 +128,42 @@ class DirectImageGuide():
       t = i/interp_steps
       interp_losses = [prompt(format_input(image_embeds, self.embedder, prompt),
                               format_input(offsets, self.embedder, prompt),
-                              format_input(sizes, self.embedder, prompt))*(1-t) for prompt in interp_prompts]
+                              format_input(sizes, self.embedder, prompt))[0]*(1-t) for prompt in interp_prompts]
     else:
       t = 1
       interp_losses = [0] 
 
-    for prompt in prompts:
-      losses.append(prompt(format_input(image_embeds, self.embedder, prompt),
-                           format_input(offsets, self.embedder, prompt),
-                           format_input(sizes, self.embedder, prompt))*t)
-    for prompt in image_prompts:
-      losses.append(prompt(format_input(image_embeds, self.embedder, prompt),
-                           format_input(offsets, self.embedder, prompt),
-                           format_input(sizes, self.embedder, prompt)))
-    for aug in loss_augs:
-      losses.append(aug(format_input(z, self.image_rep, aug), self.image_rep))
-    image_loss = self.image_rep.image_loss()
-    for img_loss in image_loss:
-      losses.append(img_loss(self.image_rep))
+    prompt_losses = {prompt:prompt(format_input(image_embeds, self.embedder, prompt),
+                                   format_input(offsets, self.embedder, prompt),
+                                   format_input(sizes, self.embedder, prompt)) for prompt in prompts}
+    aug_losses = {aug:aug(format_input(z, self.image_rep, aug), self.image_rep) for aug in loss_augs}
 
-    loss = sum(losses)+sum(interp_losses)
-    loss.backward()
+    image_augs = self.image_rep.image_loss()
+    image_losses = {aug:aug(self.image_rep) for aug in image_augs}
+    #aug_losses.update(image_losses)
+
+    losses, losses_raw = zip(*map(unpack_dict, [prompt_losses,aug_losses,image_losses]))
+    losses = list(losses)
+    losses_raw = list(losses_raw)
+    for v in prompt_losses.values():
+      v[0].mul_(t)
+
+    total_loss = sum(map(lambda x:sum(x.values()),losses)) + sum(interp_losses)
+    losses_raw.append({'TOTAL':total_loss})
+    total_loss.backward()
     self.optimizer.step()
     self.image_rep.update()
+    #if t != 0:
+    #  for v in prompt_losses.values():
+    #    v[0].div_(t)
     if save_loss:
-      loss_dict = {str(prompt):float(loss) for prompt, loss in zip(prompts+image_prompts+loss_augs+image_loss+["TOTAL"],losses+[loss])}
-      if self.dataframe is None:
-        self.dataframe = pd.DataFrame(loss_dict, index=[i])
-        self.dataframe.index.name = 'Step'
+      if not self.dataframe:
+        self.dataframe = [pd.DataFrame({str(k):float(v) for k,v in loss.items()}, index=[i]) for loss in losses_raw]
+        for df in self.dataframe:
+          df.index.name = 'Step'
       else:
-        self.dataframe = self.dataframe.append(pd.DataFrame(loss_dict, index=[i]), ignore_index=False)
-        self.dataframe.index.name = 'Step'
-      return loss_dict
-    else:
-      return {'TOTAL':float(loss)}
+        for j,(df,loss) in enumerate(zip(self.dataframe,losses_raw)):
+          self.dataframe[j] = df.append(pd.DataFrame({str(k):float(v) for k,v in loss.items()}, index=[i]), ignore_index=False)
+          self.dataframe[j].name = 'Step'
+
+    return {'TOTAL':float(total_loss)}

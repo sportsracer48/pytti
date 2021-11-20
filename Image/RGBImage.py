@@ -19,6 +19,13 @@ class RGBImage(DifferentiableImage):
     width, height = self.image_shape
     out = F.interpolate(self.tensor, (height, width) , mode='nearest')
     return clamp_with_grad(out,0,1)
+
+  def clone(self):
+    width, height = self.image_shape
+    dummy = RGBImage(width//self.scale, height//self.scale, self.scale)
+    with torch.no_grad():
+      dummy.tensor.set_(self.tensor.clone())
+    return dummy
   
   def get_image_tensor(self):
     return self.tensor.squeeze(0)

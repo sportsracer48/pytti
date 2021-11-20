@@ -1,29 +1,29 @@
 from infer import InferenceHelper
 from pytti.LossAug import MSELoss
 import gc, torch, os, math
-from pytti import DEVICE
+from pytti import DEVICE, vram_usage_mode
 from torchvision.transforms import functional as TF
 from torch.nn import functional as F
 from PIL import Image, ImageOps
 
-infer_helper = None  
+infer_helper = None
 def init_AdaBins():
   global infer_helper
   if infer_helper is None:
-    print('Loading AdaBins...')
-    os.chdir('AdaBins')
-    try:
-      infer_helper = InferenceHelper(dataset='nyu')
-    finally:
-      os.chdir('..')
-    print('AdaBins loaded.')
+    with vram_usage_mode('AdaBins'):
+      print('Loading AdaBins...')
+      os.chdir('AdaBins')
+      try:
+        infer_helper = InferenceHelper(dataset='nyu')
+      finally:
+        os.chdir('..')
+      print('AdaBins loaded.')
 
 class DepthLoss(MSELoss):
   @torch.no_grad()
-  def set_target_image(self, pil_image, device = DEVICE):
-    pil_image = pil_image.resize(self.image_shape, Image.LANCZOS)
-    depth, _ = DepthLoss.get_depth(pil_image)
-    self.comp.set_(torch.from_numpy(depth).to(device))
+  def set_comp(self, pil_image):
+    #pil_image = pil_image.resize(self.image_shape, Image.LANCZOS)
+    self.comp.set_(DepthLoss.make_comp(pil_image))
     if self.use_mask and self.mask.shape[-2:] != self.comp.shape[-2:]:
       self.mask.set_(TF.resize(self.mask, self.comp.shape[-2:]))
   
@@ -34,16 +34,23 @@ class DepthLoss(MSELoss):
     if image_area > max_depth_area:
       depth_scale_factor = math.sqrt(max_depth_area/image_area)
       height, width = int(height*depth_scale_factor), int(width*depth_scale_factor)
-      depth_input = TF.resize(input, (height, width), interpolation = TF.InterpolationMode.BICUBIC)
+      depth_input = TF.resize(input, (height, width), interpolation = TF.InterpolationMode.BILINEAR)
       depth_resized = True
     else:
       depth_input = input
       depth_resized = False
 
-    _, depth_map = infer_helper.model(depth_input)
-    depth_map = F.interpolate(depth_map, (height, width), mode='bilinear', align_corners=True)
+    _, depth_map  = infer_helper.model(depth_input)
+    depth_map = F.interpolate(depth_map, self.comp.shape[-2:],mode='bilinear', align_corners=True)
+    #depth_map = F.interpolate(depth_map, (height, width), mode='bilinear', align_corners=True)
     return super().get_loss(depth_map, img)
   
+  @classmethod
+  @vram_usage_mode("Depth Loss")
+  def make_comp(cls, pil_image, device = DEVICE):
+    depth, _ = DepthLoss.get_depth(pil_image)
+    return torch.from_numpy(depth).to(device)
+
   @staticmethod
   def get_depth(pil_image):
     init_AdaBins()
@@ -71,4 +78,5 @@ class DepthLoss(MSELoss):
     torch.cuda.empty_cache()
 
     return depth_map, depth_resized
+
 

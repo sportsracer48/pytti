@@ -8,50 +8,48 @@ import copy, re
 from pytti import *
 
 class LatentLoss(MSELoss):
+  @torch.no_grad()
   def __init__(self, comp, weight = 0.5, stop = -math.inf, name = "direct target loss", image_shape = None):
     super().__init__(comp, weight, stop, name, image_shape)
     self.pil_image = None
     self.has_latent = False
+    w, h = image_shape
+    self.direct_loss = MSELoss(TF.resize(comp.clone(), (h,w)), weight, stop, name, image_shape)
 
   @torch.no_grad()
-  def set_target_image(self, pil_image, device = DEVICE):
+  def set_comp(self, pil_image, device = DEVICE):
     self.pil_image = pil_image
     self.has_latent = False
-  
-  @torch.no_grad()
-  def set_latent(self, tensor):
-    self.pil_image = None
-    self.has_latent = True
-    self.comp.set_(tensor)
+    self.direct_loss.set_comp(pil_image.resize(self.image_shape, Image.LANCZOS))
 
   @classmethod
-  def TargetImage(cls, prompt_string, pil_image = None, image_shape = None, device = DEVICE):
-    tokens = re.split('(?<!^http)(?<!s):|:(?!//)', prompt_string, 2)
-    tokens = tokens + ['', '1', '-inf'][len(tokens):]
-    text, weight, stop = tokens
+  @vram_usage_mode('Latent Image Loss')
+  @torch.no_grad()
+  def TargetImage(cls, prompt_string, image_shape, pil_image = None, is_path = False, device = DEVICE):
+    text, weight, stop = parse(prompt_string, r"(?<!^http)(?<!s):|:(?!/)" ,['', '1', '-inf'])
+    weight, mask = parse(weight,r"_",['1','']) 
     text = text.strip()
-    if pil_image is None and text != '':
+    mask = mask.strip()
+    if pil_image is None and text != '' and is_path:
       pil_image = Image.open(fetch(text)).convert("RGB")
-      im = pil_image.resize(image_shape, Image.LANCZOS)
-      comp = TF.to_tensor(im).unsqueeze(0).to(device)
-    elif pil_image is None:
-      comp = torch.zeros(3,image_shape[1],image_shape[0]).unsqueeze(0).to(device)
-    else:
-      im = pil_image.resize(image_shape, Image.LANCZOS)
-      comp = cls.make_comp(im)
-    if image_shape is None:
-      image_shape = pil_image.size
+    comp = MSELoss.make_comp(pil_image)
     out = cls(comp, weight, stop, text+" (latent)", image_shape)
-    out.set_target_image(pil_image)
+    if pil_image is not None:
+      out.set_comp(pil_image)
+    out.set_mask(mask)
     return out
-    
+  
+  def set_mask(self, mask):
+    self.direct_loss.set_mask(mask)
+    super().set_mask(mask)
+
   def get_loss(self, input, img):
     if not self.has_latent:
-      dummy = copy.deepcopy(img)
-      dummy.encode_image(self.pil_image)
+      latent = img.make_latent(self.pil_image)
       with torch.no_grad():
-        self.comp.set_(dummy.get_latent_tensor(detach = True))
+        self.comp.set_(latent.clone())
       self.has_latent = True
-    return super().get_loss(img.get_latent_tensor() ,img)
-
+    l1 = super().get_loss(img.get_latent_tensor() ,img)/2
+    l2 = self.direct_loss.get_loss(input, img)/10
+    return l1 + l2
   

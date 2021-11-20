@@ -79,7 +79,7 @@ def make_hbox(im, fig):
     buf.seek(0)
     wi1 = widgets.Image(value=buf.read(), format='png', layout = Layout(border='0',margin='0',padding='0'))
   with io.BytesIO() as buf:
-    fig.savefig(buf, format="png")
+    fig.savefig(buf, format="png", bbox_inches='tight')
     buf.seek(0)
     wi2 = widgets.Image(value=buf.read(), format='png', layout = Layout(border='0',margin='0',padding='0'))
   return widgets.HBox([wi1, wi2], layout = Layout(border='0',margin='0',padding='0', align_items='flex-start'))
@@ -98,10 +98,10 @@ def write_settings(settings_dict, f):
   json.dump(settings_dict, f)
   f.write('\n\n')
   params = settings_dict
-  scenes = [(params.prefix_style + stage + params.suffix_style).strip() for stage in params.text_prompts.split('||') if stage]
+  scenes = [(params.scene_prefix + scene + params.scene_suffix).strip() for scene in params.scenes.split('||') if scene]
   for i,scene in enumerate(scenes):
     frame = i * params.steps_per_scene/params.save_every
-    f.write(f'{frame:.2f}: {scene}')
+    f.write(str(f'{frame:.2f}: {scene}'.encode('utf-8', 'ignore')))
     f.write('\n')
 
 def save_settings(settings_dict, path):
@@ -146,7 +146,62 @@ def load_clip(params):
 
 def get_frames(path):
   """reads the frames of the mp4 file `path` and returns them as a list of PIL images"""
-  import imageio
+  import imageio, subprocess
   from PIL import Image
-  vid = imageio.get_reader(path,  'ffmpeg')
+  from os.path import exists as path_exists
+  if not path_exists(path+'_converted.mp4'):
+    print(f'Converting {path}...')
+    subprocess.run(['ffmpeg', '-i', path, path+'_converted.mp4'])
+    print(f'Converted {path} to {path}_converted.mp4.')
+    print(f'WARNING: future runs will automatically use {path}_converted.mp4, unless you delete it.')
+  vid = imageio.get_reader(path+'_converted.mp4',  'ffmpeg')
+  n_frames = vid._meta['nframes']
+  print(f'loaded {n_frames} frames. for {path}')
   return vid
+
+def build_loss(weight_name, weight, name, img, pil_target):
+  from pytti.LossAug import LOSS_DICT
+  weight_name, suffix = weight_name.split('_', 1)
+  if weight_name == 'direct':
+    Loss = type(img).get_preferred_loss()
+  else:
+    Loss = LOSS_DICT[weight_name]
+  out = Loss.TargetImage(f"{weight_name} {name}:{weight}", img.image_shape, pil_target)
+  out.set_enabled(pil_target is not None)
+  return out
+
+def format_params(params, *args):
+  return [params[x] for x in args]
+
+rotoscopers = []
+
+def clear_rotoscopers():
+  global rotoscopers
+  rotoscopers = []
+
+def update_rotoscopers(frame_n):
+  global rotoscopers
+  for r in rotoscopers:
+    r.update(frame_n)
+
+from PIL import Image
+
+class Rotoscoper:
+  def __init__(self, video_path, target = None, thresh = None):
+    global rotoscopers
+    if video_path[0] == '-':
+      video_path = video_path[1:]
+      inverted = True
+    else:
+      inverted = False
+    
+    self.frames = get_frames(video_path)
+    self.target = target
+    self.inverted = inverted
+    rotoscopers.append(self)
+  def update(self, frame_n):
+    if self.target is None:
+      return
+    mask_pil = Image.fromarray(self.frames.get_data(frame_n)).convert('L')
+    self.target.set_mask(mask_pil, self.inverted)
+

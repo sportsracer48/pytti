@@ -1,9 +1,10 @@
 import torch
 from CLIP import clip
-from pytti import DEVICE
+from pytti import DEVICE, vram_usage_mode
 
 CLIP_PERCEPTORS = None
 
+@vram_usage_mode('CLIP')
 def init_clip(clip_models):
   global CLIP_PERCEPTORS
   if CLIP_PERCEPTORS is None:

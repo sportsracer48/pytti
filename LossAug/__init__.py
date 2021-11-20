@@ -22,21 +22,22 @@ class Loss(nn.Module):
     self.enabled = enabled
 
   def set_weight(weight):
-    self.weight.set_(self.weight.new_tensor(weight))
+    self.weight = weight
   def set_stop(stop):
-    self.stop.set_(self.stop.new_tensor(stop))
+    self.stop = stop
 
   def __str__(self):
     return self.name
 
   def forward(self, input, img, device = DEVICE):
-    if not self.enabled:
-      return 0
+    if not self.enabled or self.weight in [0,'0']:
+      return 0, 0
 
     weight = torch.as_tensor(parametric_eval(self.weight), device=device)
     stop   = torch.as_tensor(parametric_eval(self.stop),   device=device)
-    loss  = self.get_loss(input, img) * weight.sign()
-    return weight.abs() * replace_grad(loss, torch.maximum(loss, stop))
+    loss_raw = self.get_loss(input, img)
+    loss  =  loss_raw * weight.sign()
+    return weight.abs() * replace_grad(loss, torch.maximum(loss, stop)), loss_raw
 
 from pytti.LossAug.TVLoss import TVLoss
 from pytti.LossAug.MSELoss import MSELoss
@@ -44,3 +45,5 @@ from pytti.LossAug.OpticalFlowLoss import OpticalFlowLoss, TargetFlowLoss
 from pytti.LossAug.DepthLoss import DepthLoss
 from pytti.LossAug.EdgeLoss import EdgeLoss
 from pytti.LossAug.LatentLoss import LatentLoss
+from pytti.LossAug.HSVLoss import HSVLoss
+LOSS_DICT = {'edge':EdgeLoss, 'depth':DepthLoss}

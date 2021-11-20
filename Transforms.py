@@ -9,6 +9,7 @@ from infer import InferenceHelper
 
 PADDING_MODES = {'mirror':'reflection','smear':'border','black':'zeros','wrap':'zeros'}
 
+@torch.no_grad()
 def apply_grid(tensor, grid, border_mode, sampling_mode):
   height, width = tensor.shape[-2:]
   if border_mode == 'wrap':
@@ -22,6 +23,7 @@ def apply_grid(tensor, grid, border_mode, sampling_mode):
       grid = grid.add(mod_offset).remainder(2.0001).sub(1)
   return F.grid_sample(tensor,grid,mode=sampling_mode,align_corners=True,padding_mode=PADDING_MODES[border_mode])
 
+@torch.no_grad()
 def apply_flow(img, flow, border_mode = 'mirror', sampling_mode = 'bilinear', device = DEVICE):
   try:
     tensor = img.get_image_tensor().unsqueeze(0)
@@ -46,6 +48,7 @@ def apply_flow(img, flow, border_mode = 'mirror', sampling_mode = 'bilinear', de
     tensor_out = tensor.detach()
   return tensor_out
 
+@torch.no_grad()
 def zoom_2d(img, translate = (0,0), zoom = (0,0), rotate = 0, border_mode = 'mirror', sampling_mode = 'bilinear', device=DEVICE):
   try:
     tensor = img.get_image_tensor().unsqueeze(0)
@@ -68,6 +71,7 @@ def zoom_2d(img, translate = (0,0), zoom = (0,0), rotate = 0, border_mode = 'mir
     img.encode_image(Image.fromarray(array))
   return img.decode_image()
 
+@torch.no_grad()
 def render_image_3d(image, depth, P, T, border_mode, sampling_mode, stabilize, device=DEVICE):
   """
   image: n x h x w pytorch Tensor: the image tensor
@@ -91,7 +95,7 @@ def render_image_3d(image, depth, P, T, border_mode, sampling_mode, stabilize, d
   #uv = torch.cat([u,v],dim=1).to(device)
   identity = torch.eye(3).to(device)
   identity = identity[0:2,:].unsqueeze(0) #for batch
-  uv = F.affine_grid(identity, image.shape)
+  uv = F.affine_grid(identity, image.shape, align_corners=True)
   #get the depth at each point
   depth = depth.unsqueeze(0).unsqueeze(0)
   #depth = depth.to(device)
@@ -124,6 +128,7 @@ def render_image_3d(image, depth, P, T, border_mode, sampling_mode, stabilize, d
 
   return apply_grid(image,grid,border_mode,sampling_mode).squeeze(0), offset.squeeze(0)
 
+@torch.no_grad()
 def zoom_3d(img, translate = (0,0,0), rotate=0, fov = 45, near=180, far=15000, border_mode='mirror', sampling_mode='bilinear', stabilize = False, device=DEVICE):
   
   width, height = img.image_shape

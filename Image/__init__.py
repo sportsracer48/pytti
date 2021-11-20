@@ -1,4 +1,4 @@
-import torch
+import torch, copy
 from torch import nn
 import numpy as np
 from PIL import Image
@@ -22,6 +22,7 @@ class DifferentiableImage(nn.Module):
     self.pixel_format = format
     self.output_axes  = ('x', 'y', 's')
     self.lr = 0.02
+    self.latent_strength = 0
 
   def decode_training_tensor(self):
     """
@@ -34,6 +35,9 @@ class DifferentiableImage(nn.Module):
     optional method: returns an [n x w_i x h_i] tensor representing the local image data
     those data will be used for animation if afforded
     """
+    raise NotImplementedError
+
+  def clone(self):
     raise NotImplementedError
 
   def get_latent_tensor(self, detach = False):
@@ -74,6 +78,19 @@ class DifferentiableImage(nn.Module):
     """
     pass
 
+  def make_latent(self, pil_image):
+    try:
+      dummy = self.clone()
+    except NotImplementedError:
+      dummy = copy.deepcopy(self)
+    dummy.encode_image(pil_image)
+    return dummy.get_latent_tensor(detach = True)
+
+  @classmethod
+  def get_preferred_loss(cls):
+    from pytti.LossAug import HSVLoss
+    return HSVLoss
+
   def image_loss(self):
     return []
 
@@ -113,7 +130,7 @@ class EMAImage(DifferentiableImage):
   def update(self):
     if not self.training:
       raise RuntimeError('update() should only be called during training')
-    self.accum *= self.decay
+    self.accum.mul_(self.decay)
     self.biased.mul_(self.decay)
     self.biased.add_((1 - self.decay) * self.tensor)
     self.average.copy_(self.biased)

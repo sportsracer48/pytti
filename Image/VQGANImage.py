@@ -12,7 +12,6 @@ from pytti import *
 import torch
 from torch.nn import functional as F
 from pytti.Image import EMAImage
-from pytti import DEVICE
 from torchvision.transforms import functional as TF
 from PIL import Image
 from omegaconf import OmegaConf
@@ -75,6 +74,7 @@ class VQGANImage(EMAImage):
   height: (positive integer) approximate image height in pixels (will be rounded down to nearest multiple of 16)
   model:  (VQGAN) vqgan model
   """
+  @vram_usage_mode('VQGAN Image')
   def __init__(self, width, height, scale = 1, model=VQGAN_MODEL, ema_val=0.99):
     if model is None:
       model = VQGAN_MODEL
@@ -108,6 +108,7 @@ class VQGANImage(EMAImage):
     super().__init__(sideX, sideY, z, ema_val)
     self.output_axes = ('n', 's', 'y', 'x')
     self.lr = 0.15 if VQGAN_IS_GUMBEL else 0.1
+    self.latent_strength = 1
 
     #extract the parts of VQGAN we need
     self.register_buffer('vqgan_quantize_embedding', vqgan_quantize_embedding, persistent = False) 
@@ -115,18 +116,35 @@ class VQGANImage(EMAImage):
     self.vqgan_decode = model.decode
     self.vqgan_encode = model.encode
 
+  def clone(self):
+    dummy = VQGANImage(*self.image_shape)
+    with torch.no_grad():
+      dummy.tensor.set_(self.tensor.clone())
+      dummy.accum.set_(self.accum.clone())
+      dummy.biased.set_(self.biased.clone())
+      dummy.average.set_(self.average.clone())
+      dummy.decay = self.decay
+    return dummy
+
+
   def get_latent_tensor(self, detach = False, device = DEVICE):
     z = self.tensor
     if detach:
       z = z.detach()
     z_q = vector_quantize(z, self.vqgan_quantize_embedding).movedim(3, 1).to(device)
     return z_q
+  
+  @classmethod
+  def get_preferred_loss(cls):
+    from pytti.LossAug import LatentLoss
+    return LatentLoss
 
   def decode(self, z, device = DEVICE):
     z_q = vector_quantize(z, self.vqgan_quantize_embedding).movedim(3, 1).to(device)
     out = self.vqgan_decode(z_q).add(1).div(2)
     width, height = self.image_shape
-    return F.interpolate(clamp_with_grad(out, 0, 1).to(device, memory_format = torch.channels_last), (height, width), mode='nearest')
+    return clamp_with_grad(out, 0, 1)
+    #return F.interpolate(clamp_with_grad(out, 0, 1).to(device, memory_format = torch.channels_last), (height, width), mode='nearest')
 
   @torch.no_grad()
   def encode_image(self, pil_image, device=DEVICE, **kwargs):
@@ -135,6 +153,14 @@ class VQGANImage(EMAImage):
     z, *_ = self.vqgan_encode(pil_image.unsqueeze(0).to(device) * 2 - 1)
     self.tensor.set_(z.movedim(1,3))
     self.reset()
+
+  @torch.no_grad()
+  def make_latent(self, pil_image, device = DEVICE):
+    pil_image = pil_image.resize(self.image_shape, Image.LANCZOS)
+    pil_image = TF.to_tensor(pil_image)
+    z, *_ = self.vqgan_encode(pil_image.unsqueeze(0).to(device) * 2 - 1)
+    z_q = vector_quantize(z.movedim(1,3), self.vqgan_quantize_embedding).movedim(3, 1).to(device)
+    return z_q
 
   @torch.no_grad()
   def encode_random(self):
@@ -176,7 +202,8 @@ class VQGANImage(EMAImage):
         raise FileNotFoundError(f"VQGAN {model_name} checkpoint not found")
         
     VQGAN_MODEL, VQGAN_IS_GUMBEL = load_vqgan_model(vqgan_config, vqgan_checkpoint)
-    VQGAN_MODEL = VQGAN_MODEL.to(device)
+    with vram_usage_mode("VQGAN"):
+      VQGAN_MODEL = VQGAN_MODEL.to(device)
     VQGAN_NAME  = model_name
 
   @staticmethod
