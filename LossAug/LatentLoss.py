@@ -32,7 +32,7 @@ class LatentLoss(MSELoss):
     mask = mask.strip()
     if pil_image is None and text != '' and is_path:
       pil_image = Image.open(fetch(text)).convert("RGB")
-    comp = MSELoss.make_comp(pil_image)
+    comp = MSELoss.make_comp(pil_image) if pil_image is not None else torch.zeros(1,1,1,1, device = device)
     out = cls(comp, weight, stop, text+" (latent)", image_shape)
     if pil_image is not None:
       out.set_comp(pil_image)
