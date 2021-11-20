@@ -111,7 +111,7 @@ def parametric_eval(string, **vals):
     try:
       output = eval(string, math_env)
     except SyntaxError as e:
-      raise RuntimeError(str(e))
+      raise RuntimeError('Error in parametric value ' + string)
     eval_memo[string] = output
     return output
   else:
