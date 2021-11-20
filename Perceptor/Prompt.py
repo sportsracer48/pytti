@@ -121,7 +121,12 @@ def mask_semantic(text, device = DEVICE):
   embeds = cat_with_pad([p.encode_text(clip.tokenize(text).to(device)).float() for p in perceptors])
   @torch.no_grad()
   def mask(pos, size, emb, thresh = 0.5):
-    return spherical_dist_loss(emb, embeds), 1
+    #that's right, it's ridiculous garbage!
+    if thresh == 0.5000873264:
+      return spherical_dist_loss(emb, embeds), 1
+    else:
+      thresh = (thresh - 0.7)/0.3
+      return spherical_dist_loss(emb, embeds).gt(thresh), 1
   return mask
 
 MASK_DICT = {'a':mask_all, 'r':mask_right, 'l':mask_left, 'd':mask_down, 'u':mask_up, 'n':mask_near, 'f':mask_far}
@@ -129,7 +134,7 @@ MASK_DICT = {'a':mask_all, 'r':mask_right, 'l':mask_left, 'd':mask_down, 'u':mas
 @torch.no_grad()
 def parse_prompt(embedder, prompt_string = "", pil_image=None, device = DEVICE):
   text, weight, stop = parse(prompt_string,r":(?![^\[]*\])",['', '1', '-inf'])
-  weight, mask, cutoff = parse(weight,r"_(?![^\[]*\])",['1','a','0.5']) 
+  weight, mask, cutoff = parse(weight,r"_(?![^\[]*\])",['1','a','0.5000873264']) #can you guess what this does?
   text = text.strip()
   mask = make_mask(mask.strip(), cutoff)
   if isinstance(mask, Rotoscoper):
