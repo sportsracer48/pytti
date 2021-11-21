@@ -12,6 +12,7 @@ from torch.nn import functional as F
 from PIL import Image
 import imageio
 import matplotlib.pyplot as plt
+from pytti.Notebook import Rotoscoper
 from torchvision.transforms import functional as TF
 
 os.chdir('GMA')
