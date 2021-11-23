@@ -39,9 +39,9 @@ class LatentLoss(MSELoss):
     out.set_mask(mask)
     return out
   
-  def set_mask(self, mask):
-    self.direct_loss.set_mask(mask)
-    super().set_mask(mask)
+  def set_mask(self, mask, inverted = False):
+    self.direct_loss.set_mask(mask, inverted)
+    super().set_mask(mask, inverted)
 
   def get_loss(self, input, img):
     if not self.has_latent:
