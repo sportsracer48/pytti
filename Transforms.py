@@ -5,7 +5,7 @@ from PIL import Image, ImageFilter
 import numpy as np
 from pytti import *
 from pytti.LossAug.DepthLoss import DepthLoss
-from infer import InferenceHelper
+#from infer import InferenceHelper
 
 PADDING_MODES = {'mirror':'reflection','smear':'border','black':'zeros','wrap':'zeros'}
 
