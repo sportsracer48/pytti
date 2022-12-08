@@ -1,6 +1,7 @@
-from infer import InferenceHelper
+#from infer import InferenceHelper NOT HERE SORRY IT CAN'T BE DONE UNTIL GMA HAS A CHANCE TO LOAD FULLY
+#This wouldn't be a problem if I had known how to structure python packages
 from pytti.LossAug import MSELoss
-import gc, torch, os, math
+import gc, torch, os, math, sys
 from pytti import DEVICE, vram_usage_mode
 from torchvision.transforms import functional as TF
 from torch.nn import functional as F
@@ -12,6 +13,9 @@ def init_AdaBins():
   if infer_helper is None:
     with vram_usage_mode('AdaBins'):
       print('Loading AdaBins...')
+      if('./AdaBins' not in sys.path):
+        sys.path.append('./AdaBins')
+      from infer import InferenceHelper #I hate utils.py I hate utils.py I hate utils.py  
       os.chdir('AdaBins')
       try:
         infer_helper = InferenceHelper(dataset='nyu')
