@@ -19,8 +19,8 @@ os.chdir('GMA')
 try:
   sys.path.append('core')
   from network import RAFTGMA
-  from utils import flow_viz
-  from utils.utils import InputPadder
+  from utilus import flow_viz
+  from utilus.utils import InputPadder
 finally:
   os.chdir('..')
 
